@@ -256,6 +256,54 @@ CREATE TABLE IF NOT EXISTS public.notifications (
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON public.notifications(user_id, is_read);
 
 -- ------------------------------------------------------------------------------
+-- PROFILE CREATION TRIGGER (auth.users INSERT -> public.profiles)
+-- Normal signups ALWAYS create role = 'user'. Default role enforced at DB level.
+-- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, email, full_name, role, handicap)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', 'Member'),
+    'user',
+    18.0
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    full_name = CASE WHEN profiles.full_name IS NULL OR profiles.full_name = '' THEN EXCLUDED.full_name ELSE profiles.full_name END,
+    updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- Guard to prevent users from altering their own role
+CREATE OR REPLACE FUNCTION public.prevent_self_role_escalation()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.role <> OLD.role AND (
+    auth.uid() IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin'
+    )
+  ) THEN
+    RAISE EXCEPTION 'Only administrators can modify user role.';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS enforce_role_escalation_guard ON public.profiles;
+CREATE TRIGGER enforce_role_escalation_guard
+  BEFORE UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.prevent_self_role_escalation();
+
+-- ------------------------------------------------------------------------------
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- ------------------------------------------------------------------------------
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -272,30 +320,39 @@ ALTER TABLE public.payouts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 
--- Profiles: Public read, self edit, admin all
+-- 1. Profiles: Public read, self edit, admin all
 CREATE POLICY "Public profiles are viewable by everyone" ON public.profiles FOR SELECT USING (true);
 CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "Admins can manage all profiles" ON public.profiles FOR ALL USING (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
 
--- Charities: Public read, admin write
+-- 2. Charities: Public read, admin write
 CREATE POLICY "Charities viewable by everyone" ON public.charities FOR SELECT USING (true);
 CREATE POLICY "Admins can manage charities" ON public.charities FOR ALL USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
--- User Charities: Viewable by self or admin, updatable by self
+-- 3. User Charities: Viewable by self or admin, updatable by self
 CREATE POLICY "Users view own charity selection" ON public.user_charities FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users modify own charity selection" ON public.user_charities FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "Admins view all charity selections" ON public.user_charities FOR SELECT USING (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
 
--- Subscriptions: Viewable by self and admin
+-- 4. Subscriptions: Viewable by self and admin; modifications restricted to webhook / service role / admin
 CREATE POLICY "Users view own subscription" ON public.subscriptions FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Admins view and manage all subscriptions" ON public.subscriptions FOR ALL USING (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
 
--- Scores: Viewable and modifiable by owner or admin
+-- 5. Scores: Viewable and modifiable by owner or admin
 CREATE POLICY "Users manage own scores" ON public.scores FOR ALL USING (auth.uid() = user_id);
 CREATE POLICY "Admins can view all scores" ON public.scores FOR SELECT USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
--- Draws: Viewable by everyone if published, drafts/simulated only by admin
+-- 6. Draws: Viewable by everyone if published, drafts/simulated only by admin
 CREATE POLICY "Public can view published draws" ON public.draws FOR SELECT USING (
   status IN ('PUBLISHED', 'COMPLETED') OR 
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
@@ -304,13 +361,19 @@ CREATE POLICY "Admins manage draws" ON public.draws FOR ALL USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
--- Draw Entries: Owner or admin can view
+-- 7. Draw Entries: Owner or admin can view
 CREATE POLICY "Users view own entries" ON public.draw_entries FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Admins view all entries" ON public.draw_entries FOR SELECT USING (
+CREATE POLICY "Admins view all entries" ON public.draw_entries FOR ALL USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
--- Winners & Proofs: Owner can view/upload, admin can manage
+-- 8. Prize Pools: Public read, admin manage
+CREATE POLICY "Prize pools viewable by everyone" ON public.prize_pools FOR SELECT USING (true);
+CREATE POLICY "Admins manage prize pools" ON public.prize_pools FOR ALL USING (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
+
+-- 9. Winners & Proofs: Owner can view/upload, admin can manage
 CREATE POLICY "Users view own winnings" ON public.winners FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Admins view and manage all winners" ON public.winners FOR ALL USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
@@ -322,15 +385,50 @@ CREATE POLICY "Users upload own winner proof" ON public.winner_proofs FOR INSERT
 CREATE POLICY "Users view own proof" ON public.winner_proofs FOR SELECT USING (
   EXISTS (SELECT 1 FROM public.winners WHERE id = winner_id AND user_id = auth.uid())
 );
-CREATE POLICY "Admins view all proofs" ON public.winner_proofs FOR SELECT USING (
+CREATE POLICY "Admins view all proofs" ON public.winner_proofs FOR ALL USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
 
--- Audit Logs: Admin only
+-- 10. Payouts: Owner can view own payouts, only admin can create/mark completed
+CREATE POLICY "Users view own payouts" ON public.payouts FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Admins manage all payouts" ON public.payouts FOR ALL USING (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);
+
+-- 11. Audit Logs: Admin only
 CREATE POLICY "Admins view audit logs" ON public.audit_logs FOR SELECT USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
 );
+CREATE POLICY "Admins insert audit logs" ON public.audit_logs FOR INSERT WITH CHECK (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin') OR auth.uid() IS NOT NULL
+);
 
--- Notifications: Owner only
+-- 12. Notifications: Owner only
 CREATE POLICY "Users view own notifications" ON public.notifications FOR SELECT USING (auth.uid() = user_id);
 CREATE POLICY "Users update own notifications" ON public.notifications FOR UPDATE USING (auth.uid() = user_id);
+
+-- ------------------------------------------------------------------------------
+-- 13. STORAGE BUCKET & POLICIES (winner-proofs)
+-- ------------------------------------------------------------------------------
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('winner-proofs', 'winner-proofs', false)
+ON CONFLICT (id) DO NOTHING;
+
+CREATE POLICY "Authenticated users upload proof" ON storage.objects
+FOR INSERT TO authenticated WITH CHECK (
+  bucket_id = 'winner-proofs' AND (auth.uid())::text = (storage.foldername(name))[1]
+);
+
+CREATE POLICY "Users and admins read proof" ON storage.objects
+FOR SELECT TO authenticated USING (
+  bucket_id = 'winner-proofs' AND (
+    (auth.uid())::text = (storage.foldername(name))[1] OR
+    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+  )
+);
+
+CREATE POLICY "Admins manage all storage proof objects" ON storage.objects
+FOR ALL TO authenticated USING (
+  bucket_id = 'winner-proofs' AND
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+);

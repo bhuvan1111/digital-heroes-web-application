@@ -79,21 +79,7 @@ export default function SignupPage() {
         return;
       }
 
-      // Upsert profile with strictly 'user' role
-      const { error: profileError } = await supabase.from("profiles").upsert({
-        id: authData.user.id,
-        email: email.toLowerCase(),
-        full_name: fullName,
-        role: "user",
-        handicap: 18.0,
-        updated_at: new Date().toISOString(),
-      });
-
-      if (profileError) {
-        console.error("Profile creation error:", profileError.message);
-      }
-
-      // Save user charity pledge
+      // Save user charity pledge (profile is automatically created by PostgreSQL auth.users trigger)
       await DataStore.setUserCharity(authData.user.id, selectedCharityId, contributionPercentage);
 
       setIsLoading(false);

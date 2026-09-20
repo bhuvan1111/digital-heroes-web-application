@@ -307,53 +307,60 @@ export class DataStore {
     return !!sub && sub.status === "active";
   }
 
-  public static async updateSubscriptionPlan(
-    userId: string,
-    plan: "monthly" | "yearly"
-  ): Promise<Subscription> {
-    const amount = plan === "monthly" ? 3900 : 39000;
+  /**
+   * Secure server-side synchronization for Stripe webhook processing.
+   * Upserts the actual Stripe subscription event data into PostgreSQL.
+   */
+  public static async syncSubscriptionFromStripe(payload: {
+    userId?: string;
+    stripeCustomerId: string;
+    stripeSubscriptionId?: string | null;
+    plan: "monthly" | "yearly";
+    status: "active" | "canceled" | "past_due" | "lapsed" | "trialing" | "incomplete";
+    amountCents: number;
+    currency?: string;
+    currentPeriodStart?: string;
+    currentPeriodEnd?: string;
+    cancelAtPeriodEnd?: boolean;
+  }): Promise<Subscription> {
     const supabase = await getSupabase();
-    const existing = await this.getUserSubscription(userId);
 
-    if (existing) {
-      const { data, error } = await supabase
+    let targetUserId = payload.userId;
+    if (!targetUserId) {
+      const { data: existing } = await supabase
         .from("subscriptions")
-        .update({
-          plan,
-          amount_cents: amount,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existing.id)
-        .select()
-        .single();
-
-      if (error) throw new Error(error.message);
-      return data as Subscription;
-    } else {
-      const newSub = {
-        id: crypto.randomUUID(),
-        user_id: userId,
-        stripe_customer_id: `cus_${userId.slice(0, 8)}`,
-        plan,
-        status: "active" as const,
-        amount_cents: amount,
-        currency: "usd",
-        current_period_start: new Date().toISOString(),
-        current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
-        cancel_at_period_end: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      const { data, error } = await supabase
-        .from("subscriptions")
-        .insert(newSub)
-        .select()
-        .single();
-
-      if (error) throw new Error(error.message);
-      return data as Subscription;
+        .select("user_id")
+        .eq("stripe_customer_id", payload.stripeCustomerId)
+        .maybeSingle();
+      targetUserId = existing?.user_id;
     }
+
+    if (!targetUserId) {
+      throw new Error(`Cannot sync Stripe subscription: no user mapped to customer ${payload.stripeCustomerId}`);
+    }
+
+    const record = {
+      user_id: targetUserId,
+      stripe_customer_id: payload.stripeCustomerId,
+      stripe_subscription_id: payload.stripeSubscriptionId || null,
+      plan: payload.plan,
+      status: payload.status,
+      amount_cents: payload.amountCents,
+      currency: payload.currency || "usd",
+      current_period_start: payload.currentPeriodStart || new Date().toISOString(),
+      current_period_end: payload.currentPeriodEnd || new Date(Date.now() + (payload.plan === "yearly" ? 365 : 30) * 86400000).toISOString(),
+      cancel_at_period_end: payload.cancelAtPeriodEnd || false,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .upsert(record, { onConflict: "user_id" })
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+    return data as Subscription;
   }
 
   // --------------------------------------------------------------------------
@@ -656,6 +663,57 @@ export class DataStore {
 
     if (drawError) throw new Error(drawError.message);
 
+    // 1. Persist draw participant entries
+    if (simResult.allEntries && simResult.allEntries.length > 0) {
+      const entryRecords = simResult.allEntries.map((e) => ({
+        id: e.id,
+        draw_id: drawId,
+        user_id: e.user_id,
+        numbers: e.numbers,
+        match_count: e.match_count,
+        matched_numbers: e.matched_numbers,
+        prize_tier: e.prize_tier,
+        prize_amount: e.prize_amount,
+        created_at: publishedAt,
+      }));
+
+      const { error: entriesError } = await supabase
+        .from("draw_entries")
+        .upsert(entryRecords, { onConflict: "draw_id,user_id" });
+      if (entriesError) throw new Error(entriesError.message);
+    }
+
+    // 2. Persist prize pool allocation
+    const poolCalcs = DrawEngine.calculatePrizePool(
+      simResult.totalPrizePool,
+      simResult.jackpotRolloverIn,
+      simResult.tier5Winners.length,
+      simResult.tier4Winners.length,
+      simResult.tier3Winners.length
+    );
+
+    const { error: poolError } = await supabase
+      .from("prize_pools")
+      .upsert(
+        {
+          draw_id: drawId,
+          tier_5_amount: poolCalcs.tier5Pool,
+          tier_4_amount: poolCalcs.tier4Pool,
+          tier_3_amount: poolCalcs.tier3Pool,
+          tier_5_winners_count: simResult.tier5Winners.length,
+          tier_4_winners_count: simResult.tier4Winners.length,
+          tier_3_winners_count: simResult.tier3Winners.length,
+          tier_5_payout_per_winner: poolCalcs.tier5PayoutPerWinner,
+          tier_4_payout_per_winner: poolCalcs.tier4PayoutPerWinner,
+          tier_3_payout_per_winner: poolCalcs.tier3PayoutPerWinner,
+          rollover_amount: poolCalcs.jackpotRolloverOut,
+          created_at: publishedAt,
+        },
+        { onConflict: "draw_id" }
+      );
+    if (poolError) throw new Error(poolError.message);
+
+    // 3. Persist official winners
     const allWinners = [
       ...simResult.tier5Winners,
       ...simResult.tier4Winners,
@@ -995,13 +1053,42 @@ export class DataStore {
       amount: c.total_received || 0,
     }));
 
-    const months = ["Nov", "Dec", "Jan", "Feb", "Mar", "Apr"];
-    const monthlyGrowth = months.map((month, idx) => ({
-      month,
-      subscribers: Math.max(1, Math.round((activeSubs.length * (idx + 1)) / months.length)),
-      charityDonated: Math.round((totalCharityContributions * (idx + 1)) / months.length),
-      prizePool: Math.round((totalPrizePool * (idx + 1)) / months.length),
-    }));
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const dates: Date[] = [];
+    drawsList.forEach((dr) => dr.draw_date && dates.push(new Date(dr.draw_date)));
+    subs.forEach((s) => s.created_at && dates.push(new Date(s.created_at)));
+    const referenceDate = dates.length > 0 ? new Date(Math.max(...dates.map((d) => d.getTime()))) : new Date();
+
+    const monthlyGrowth = Array.from({ length: 6 }).map((_, i) => {
+      const d = new Date(referenceDate.getFullYear(), referenceDate.getMonth() - (5 - i), 1);
+      const start = new Date(d.getFullYear(), d.getMonth(), 1);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+      const monthLabel = monthNames[d.getMonth()];
+
+      const subscribers = subs.filter((s) => {
+        if (!s.created_at) return false;
+        const createdAt = new Date(s.created_at);
+        return createdAt <= end && (s.status === "active" || s.status === "past_due");
+      }).length;
+
+      const monthlyDraws = drawsList.filter((dr) => {
+        const drawDate = new Date(dr.draw_date);
+        return drawDate >= start && drawDate <= end;
+      });
+
+      const prizePool = monthlyDraws.reduce((acc, dr) => acc + Number(dr.total_prize_pool || 0), 0);
+      const charityDonated = monthlyDraws.reduce(
+        (acc, dr) => acc + Math.round(Number(dr.total_prize_pool || 0) * 0.25),
+        0
+      );
+
+      return {
+        month: monthLabel,
+        subscribers: Math.max(subscribers, activeSubs.length > 0 ? Math.min(i + 1, activeSubs.length) : 0),
+        charityDonated,
+        prizePool: Math.round(prizePool),
+      };
+    });
 
     return {
       totalUsers: usersList.length,

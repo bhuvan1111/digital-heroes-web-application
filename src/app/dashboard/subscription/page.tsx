@@ -37,20 +37,34 @@ export default function DashboardSubscriptionPage() {
 
   React.useEffect(() => {
     loadSub();
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("status") === "success") {
+        setFeedback("Stripe checkout completed! Your subscription is synchronizing via secure webhook.");
+        setTimeout(() => setFeedback(null), 5000);
+      }
+    }
   }, [loadSub]);
 
   const handlePlanSwitch = async (newPlan: "monthly" | "yearly") => {
     if (!currentUser) return;
     setIsLoading(true);
     try {
-      await DataStore.updateSubscriptionPlan(currentUser.id, newPlan);
-      setIsLoading(false);
-      setFeedback(`Plan upgraded to ${newPlan === "yearly" ? "Annual Champion" : "Monthly Membership"}!`);
-      await loadSub();
-      setTimeout(() => setFeedback(null), 3000);
+      const res = await fetch("/api/stripe/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: newPlan }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        throw new Error(data.error || "Failed to initiate Stripe Checkout");
+      }
     } catch (err) {
       setIsLoading(false);
       console.error("Failed to switch plan", err);
+      alert(err instanceof Error ? err.message : "Failed to launch Stripe Checkout.");
     }
   };
 
@@ -80,14 +94,16 @@ export default function DashboardSubscriptionPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-slate-800">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <Badge variant="success">Active Status</Badge>
+              <Badge variant={subscription?.status === "active" ? "success" : "warning"}>
+                {subscription?.status === "active" ? "Active Status" : (subscription?.status ? subscription.status.toUpperCase() : "Inactive")}
+              </Badge>
               <Badge variant="outline">Stripe Test Synchronized</Badge>
             </div>
             <h2 className="text-3xl font-black text-white">
               {isYearly ? "Annual Champion" : "Monthly Membership"}
             </h2>
             <p className="text-sm text-slate-400 mt-1">
-              Customer Reference: <code>{subscription?.stripe_customer_id || "cus_live_demo"}</code>
+              Customer Reference: <code>{subscription?.stripe_customer_id || "Pending Stripe Session"}</code>
             </p>
           </div>
 
@@ -104,7 +120,7 @@ export default function DashboardSubscriptionPage() {
           <div>
             <span className="text-slate-400 block font-semibold">Next Renewal Date</span>
             <span className="text-sm font-bold text-white mt-1 block">
-              {formatDate(subscription?.current_period_end || "2024-06-01")}
+              {formatDate(subscription?.current_period_end || new Date().toISOString())}
             </span>
           </div>
           <div>
