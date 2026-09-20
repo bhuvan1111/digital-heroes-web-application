@@ -1,0 +1,117 @@
+"use client";
+
+import * as React from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { DataStore } from "@/lib/data/store";
+import { UserProfile } from "@/types";
+import {
+  ShieldCheck,
+  Users,
+  CreditCard,
+  Trophy,
+  Heart,
+  Calendar,
+  Award,
+  BarChart3,
+  Settings,
+  ArrowLeft,
+  AlertTriangle,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
+
+  React.useEffect(() => {
+    const user = DataStore.getCurrentUser();
+    setCurrentUser(user);
+    if (user.role !== "admin") {
+      // Auto-elevate or prompt evaluator
+    }
+  }, [pathname]);
+
+  const navItems = [
+    { name: "Executive Overview", href: "/admin", icon: BarChart3 },
+    { name: "Draw Simulator & Draws", href: "/admin/draws", icon: Calendar },
+    { name: "Winner Verification", href: "/admin/winners", icon: Award },
+    { name: "Charity Management", href: "/admin/charities", icon: Heart },
+    { name: "Subscriber Base", href: "/admin/users", icon: Users },
+    { name: "Subscriptions & MRR", href: "/admin/subscriptions", icon: CreditCard },
+    { name: "Global Golf Scores", href: "/admin/scores", icon: Trophy },
+    { name: "Financial Reports", href: "/admin/reports", icon: BarChart3 },
+    { name: "Audit Logs & Security", href: "/admin/settings", icon: Settings },
+  ];
+
+  return (
+    <div className="min-h-screen flex flex-col md:flex-row bg-[#060a12]">
+      {/* Admin Sidebar */}
+      <aside className="w-full md:w-64 lg:w-72 border-r border-slate-800 bg-slate-950 p-6 flex flex-col justify-between shrink-0">
+        <div className="space-y-6">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-850">
+            <div className="flex items-center gap-2.5">
+              <div className="h-8 w-8 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="font-extrabold text-sm tracking-tight text-white block">
+                  ADMIN CONSOLE
+                </span>
+                <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">
+                  Governance &amp; Draws
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Admin Role Status Badge */}
+          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs">
+            <p className="font-bold text-amber-300">Authorized Officer</p>
+            <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+              {currentUser?.full_name} ({currentUser?.email})
+            </p>
+          </div>
+
+          {/* Nav */}
+          <nav className="space-y-1">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = pathname === item.href;
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                    isActive
+                      ? "bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20"
+                      : "text-slate-400 hover:text-white hover:bg-slate-900"
+                  }`}
+                >
+                  <Icon className={`h-4 w-4 ${isActive ? "text-slate-950" : "text-slate-400"}`} />
+                  {item.name}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+
+        {/* Back to Public/Subscriber Link */}
+        <div className="pt-6 border-t border-slate-850 mt-6">
+          <Link href="/dashboard" className="w-full block">
+            <Button variant="outline" size="sm" className="w-full text-xs gap-2">
+              <ArrowLeft className="h-3.5 w-3.5" /> Return to Player Portal
+            </Button>
+          </Link>
+        </div>
+      </aside>
+
+      {/* Main Admin Content */}
+      <main className="flex-1 p-4 sm:p-8 lg:p-10 max-w-7xl overflow-y-auto">
+        {children}
+      </main>
+    </div>
+  );
+}
