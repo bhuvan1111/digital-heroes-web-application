@@ -29,10 +29,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   React.useEffect(() => {
     const user = DataStore.getCurrentUser();
     setCurrentUser(user);
-    if (user.role !== "admin") {
-      // Auto-elevate or prompt evaluator
+    if (!user || user.role !== "admin") {
+      router.push("/dashboard");
     }
-  }, [pathname]);
+  }, [pathname, router]);
+
 
   const navItems = [
     { name: "Executive Overview", href: "/admin", icon: BarChart3 },

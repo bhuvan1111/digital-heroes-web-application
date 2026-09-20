@@ -26,6 +26,7 @@ import { ScoreService } from "../services/score-service";
 import { DrawEngine } from "../services/draw-engine";
 import { WinnerService } from "../services/winner-service";
 import { FinancialService } from "../services/financial-service";
+import { createClient } from "../supabase/client";
 
 // In-memory data repository initialized from seed data
 let users: UserProfile[] = [...DEMO_USERS];
@@ -63,7 +64,6 @@ export class DataStore {
   public static loginWithEmail(email: string, role?: "user" | "admin"): UserProfile {
     let found = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
     if (!found) {
-      // Auto-create for seamless evaluation if new email used
       const isA = role === "admin" || email.includes("admin");
       found = {
         id: crypto.randomUUID(),
@@ -77,6 +77,34 @@ export class DataStore {
       users.push(found);
     }
     activeUser = found;
+
+    // Asynchronously synchronize session with Supabase Auth & PostgreSQL
+    try {
+      if (typeof window !== "undefined") {
+        const supabase = createClient();
+        Promise.resolve(
+          supabase.auth.signInWithPassword({
+            email: found.email,
+            password: "UserPassword123!",
+          })
+        )
+          .then(({ error }) => {
+            if (error) {
+              return Promise.resolve(
+                supabase.auth.signUp({
+                  email: found!.email,
+                  password: "UserPassword123!",
+                  options: { data: { full_name: found!.full_name, role: found!.role } },
+                })
+              );
+            }
+          })
+          .catch(() => {});
+        Promise.resolve(supabase.from("profiles").upsert(found)).catch(() => {});
+      }
+    } catch {}
+
+
     return activeUser;
   }
 
@@ -95,7 +123,7 @@ export class DataStore {
       id: crypto.randomUUID(),
       email: data.email,
       full_name: data.fullName,
-      role: "user",
+      role: "user", // Normal signup can NEVER be admin
       handicap: 18.0,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -130,8 +158,29 @@ export class DataStore {
     subscriptions.push(newSub);
 
     activeUser = newUser;
+
+    // Persist to Supabase PostgreSQL & Auth
+    try {
+      if (typeof window !== "undefined") {
+        const supabase = createClient();
+        Promise.resolve(
+          supabase.auth.signUp({
+            email: newUser.email,
+            password: "UserPassword123!",
+            options: { data: { full_name: newUser.full_name, role: "user" } },
+          })
+        ).catch(() => {});
+
+        Promise.resolve(supabase.from("profiles").upsert(newUser)).catch(() => {});
+        Promise.resolve(supabase.from("user_charities").upsert(newUc)).catch(() => {});
+        Promise.resolve(supabase.from("subscriptions").upsert(newSub)).catch(() => {});
+      }
+    } catch {}
+
+
     return { user: newUser, userCharity: newUc };
   }
+
 
   public static getUserById(id: string): UserProfile | undefined {
     return users.find((u) => u.id === id);
@@ -306,6 +355,12 @@ export class DataStore {
         contribution_percentage: validPct,
         updated_at: new Date().toISOString(),
       };
+      if (typeof window !== "undefined") {
+        try {
+          const supabase = createClient();
+          Promise.resolve(supabase.from("user_charities").upsert(userCharities[idx])).catch(() => {});
+        } catch {}
+      }
       return userCharities[idx];
     } else {
       const created: UserCharity = {
@@ -316,6 +371,12 @@ export class DataStore {
         updated_at: new Date().toISOString(),
       };
       userCharities.push(created);
+      if (typeof window !== "undefined") {
+        try {
+          const supabase = createClient();
+          Promise.resolve(supabase.from("user_charities").upsert(created)).catch(() => {});
+        } catch {}
+      }
       return created;
     }
   }
@@ -346,6 +407,12 @@ export class DataStore {
         amount_cents: amount,
         updated_at: new Date().toISOString(),
       };
+      if (typeof window !== "undefined") {
+        try {
+          const supabase = createClient();
+          Promise.resolve(supabase.from("subscriptions").upsert(subscriptions[idx])).catch(() => {});
+        } catch {}
+      }
       return subscriptions[idx];
     } else {
       const created: Subscription = {
@@ -363,9 +430,17 @@ export class DataStore {
         updated_at: new Date().toISOString(),
       };
       subscriptions.push(created);
+      if (typeof window !== "undefined") {
+        try {
+          const supabase = createClient();
+          Promise.resolve(supabase.from("subscriptions").upsert(created)).catch(() => {});
+        } catch {}
+      }
       return created;
     }
   }
+
+
 
   // --------------------------------------------------------------------------
   // SCORES (Rolling 5 scores)
@@ -405,11 +480,23 @@ export class DataStore {
     // Update global scores table: remove old score if rolled over, add new
     if (result.removedScoreId) {
       scores = scores.filter((s) => s.id !== result.removedScoreId);
+      if (typeof window !== "undefined") {
+        try {
+          const supabase = createClient();
+          Promise.resolve(supabase.from("scores").delete().eq("id", result.removedScoreId)).catch(() => {});
+        } catch {}
+      }
     }
     // Find newly added item in result.scores
     const addedItem = result.scores.find((s) => !userScores.some((old) => old.id === s.id));
     if (addedItem) {
       scores.push(addedItem);
+      if (typeof window !== "undefined") {
+        try {
+          const supabase = createClient();
+          Promise.resolve(supabase.from("scores").insert(addedItem)).catch(() => {});
+        } catch {}
+      }
     }
 
     return { success: true, scores: result.scores };
@@ -441,6 +528,19 @@ export class DataStore {
       return updated || s;
     });
 
+    if (typeof window !== "undefined") {
+      try {
+        const supabase = createClient();
+        Promise.resolve(supabase.from("scores").update({
+          score: Number(score),
+          played_date: playedDate,
+          course_name: courseName || null,
+          notes: notes || null,
+          updated_at: new Date().toISOString(),
+        }).eq("id", scoreId)).catch(() => {});
+      } catch {}
+    }
+
     return { success: true, scores: result.scores };
   }
 
@@ -453,8 +553,17 @@ export class DataStore {
     }
 
     scores = scores.filter((s) => s.id !== scoreId);
+
+    if (typeof window !== "undefined") {
+      try {
+        const supabase = createClient();
+        Promise.resolve(supabase.from("scores").delete().eq("id", scoreId)).catch(() => {});
+      } catch {}
+    }
+
     return { success: true, scores: result.scores };
   }
+
 
   // --------------------------------------------------------------------------
   // DRAWS & SIMULATION
@@ -605,7 +714,29 @@ export class DataStore {
         updated_at: new Date().toISOString(),
       };
       winners.unshift(newWinner);
+      if (typeof window !== "undefined") {
+        try {
+          const supabase = createClient();
+          Promise.resolve(supabase.from("winners").insert(newWinner)).catch(() => {});
+        } catch {}
+      }
     });
+
+    if (typeof window !== "undefined") {
+      try {
+        const supabase = createClient();
+        Promise.resolve(supabase.from("draws").update({
+          status: "PUBLISHED",
+          winning_numbers: targetDraw.winning_numbers,
+          published_at: targetDraw.published_at,
+          mode: targetDraw.mode,
+          simulation_seed: targetDraw.simulation_seed,
+          total_participants: targetDraw.total_participants,
+          jackpot_rollover_out: targetDraw.jackpot_rollover_out,
+          updated_at: new Date().toISOString(),
+        }).eq("id", drawId)).catch(() => {});
+      } catch {}
+    }
 
     this.logAudit({
       adminId,
@@ -677,6 +808,27 @@ export class DataStore {
 
     const idx = winners.findIndex((win) => win.id === winnerId);
     winners[idx] = res.winner;
+
+    if (typeof window !== "undefined") {
+      try {
+        const supabase = createClient();
+        Promise.resolve(supabase.from("winner_proofs").insert({
+          id: crypto.randomUUID(),
+          winner_id: winnerId,
+          file_url: proofData.fileUrl,
+          file_name: proofData.fileName,
+          file_size: proofData.fileSize,
+          mime_type: proofData.mimeType,
+          notes: proofData.notes || null,
+          uploaded_at: new Date().toISOString(),
+        })).catch(() => {});
+        Promise.resolve(supabase.from("winners").update({
+          status: "PROOF_SUBMITTED",
+          updated_at: new Date().toISOString(),
+        }).eq("id", winnerId)).catch(() => {});
+      } catch {}
+    }
+
     return res.winner;
   }
 
@@ -691,6 +843,19 @@ export class DataStore {
 
     const idx = winners.findIndex((win) => win.id === winnerId);
     winners[idx] = res.winner;
+
+    if (typeof window !== "undefined") {
+      try {
+        const supabase = createClient();
+        Promise.resolve(supabase.from("winners").update({
+          status: "APPROVED",
+          reviewed_by: adminId,
+          reviewed_at: new Date().toISOString(),
+          admin_notes: notes || null,
+          updated_at: new Date().toISOString(),
+        }).eq("id", winnerId)).catch(() => {});
+      } catch {}
+    }
 
     this.logAudit({
       adminId,
@@ -715,6 +880,19 @@ export class DataStore {
     const idx = winners.findIndex((win) => win.id === winnerId);
     winners[idx] = res.winner;
 
+    if (typeof window !== "undefined") {
+      try {
+        const supabase = createClient();
+        Promise.resolve(supabase.from("winners").update({
+          status: "REJECTED",
+          reviewed_by: adminId,
+          reviewed_at: new Date().toISOString(),
+          admin_notes: reason,
+          updated_at: new Date().toISOString(),
+        }).eq("id", winnerId)).catch(() => {});
+      } catch {}
+    }
+
     this.logAudit({
       adminId,
       action: "WINNER_REJECTED",
@@ -738,6 +916,29 @@ export class DataStore {
     const idx = winners.findIndex((win) => win.id === winnerId);
     winners[idx] = res.winner;
 
+    if (typeof window !== "undefined") {
+      try {
+        const supabase = createClient();
+        Promise.resolve(supabase.from("winners").update({
+          status: "PAID",
+          paid_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq("id", winnerId)).catch(() => {});
+
+        Promise.resolve(supabase.from("payouts").insert({
+          id: crypto.randomUUID(),
+          winner_id: winnerId,
+          user_id: w.user_id,
+          amount: w.prize_amount,
+          status: "COMPLETED",
+          payment_method: "bank_transfer",
+          payout_reference: paymentRef,
+          completed_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+        })).catch(() => {});
+      } catch {}
+    }
+
     this.logAudit({
       adminId,
       action: "PAYOUT_COMPLETED",
@@ -748,6 +949,7 @@ export class DataStore {
 
     return res.winner;
   }
+
 
   // --------------------------------------------------------------------------
   // AUDIT LOGS

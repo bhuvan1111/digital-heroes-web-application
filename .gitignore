@@ -21,3 +21,6 @@ next-env.d.ts
 Thumbs.db
 
 .vercel
+*.zip
+digital-heroes-source-code/
+digital-heroes-clean-source/
