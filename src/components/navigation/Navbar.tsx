@@ -163,12 +163,12 @@ export function Navbar() {
             </div>
           ) : (
             <div className="flex items-center gap-3 pl-2 border-l border-slate-800">
-              <div className="h-8 w-8 rounded-full overflow-hidden border border-slate-700">
-                <img
-                  src={currentUser.avatar_url || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100"}
-                  alt={currentUser.full_name}
-                  className="h-full w-full object-cover"
-                />
+              <div className="h-8 w-8 rounded-full flex items-center justify-center bg-slate-800 border border-slate-700 text-brand-400 font-bold text-xs uppercase shadow-sm">
+                {currentUser.role === "admin" ? (
+                  <ShieldCheck className="h-4 w-4 text-amber-400" />
+                ) : (
+                  currentUser.full_name?.charAt(0) || <User className="h-4 w-4 text-brand-400" />
+                )}
               </div>
             </div>
           )}

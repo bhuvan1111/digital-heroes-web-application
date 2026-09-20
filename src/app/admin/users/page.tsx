@@ -107,12 +107,12 @@ export default function AdminUsersPage() {
                 return (
                   <tr key={u.id} className="hover:bg-slate-850/40 transition-colors">
                     <td className="px-6 py-4 flex items-center gap-3">
-                      <div className="h-9 w-9 rounded-full overflow-hidden border border-slate-700 shrink-0">
-                        <img
-                          src={u.avatar_url || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100"}
-                          alt={u.full_name}
-                          className="h-full w-full object-cover"
-                        />
+                      <div className="h-9 w-9 rounded-full flex items-center justify-center bg-slate-800 border border-slate-700 text-brand-400 font-bold text-xs uppercase shrink-0">
+                        {u.role === "admin" ? (
+                          <ShieldCheck className="h-4 w-4 text-amber-400" />
+                        ) : (
+                          u.full_name?.charAt(0) || "U"
+                        )}
                       </div>
                       <div>
                         <p className="font-bold text-white">{u.full_name}</p>

@@ -50,12 +50,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="space-y-6">
           {/* User Profile Mini Card */}
           <div className="p-4 rounded-2xl border border-slate-800 bg-slate-900/60 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full overflow-hidden border border-slate-700 shrink-0">
-              <img
-                src={currentUser?.avatar_url || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100"}
-                alt={currentUser?.full_name || "User"}
-                className="h-full w-full object-cover"
-              />
+            <div className="h-10 w-10 rounded-full flex items-center justify-center bg-gradient-to-tr from-brand-600 to-brand-400 text-slate-950 font-black text-sm uppercase shadow-md shrink-0">
+              {currentUser?.full_name?.charAt(0) || "U"}
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-bold text-white truncate">{currentUser?.full_name}</p>
