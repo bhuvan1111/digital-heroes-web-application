@@ -68,17 +68,15 @@ export default function CharitiesPage() {
           </p>
         </div>
 
-        <Button
-          variant="gold"
-          onClick={() => {
-            setSelectedCharityForDonation(charities[0] || null);
-            setDirectDonateOpen(true);
-          }}
-          className="gap-2"
-        >
-          <Sparkles className="h-4 w-4" />
-          Make Independent Donation
-        </Button>
+        <Link href="/charities/donate">
+          <Button
+            variant="gold"
+            className="gap-2"
+          >
+            <Sparkles className="h-4 w-4" />
+            Make Independent Donation
+          </Button>
+        </Link>
       </div>
 
       {/* Filter Bar */}
