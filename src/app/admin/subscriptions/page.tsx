@@ -2,18 +2,38 @@
 
 import * as React from "react";
 import { DataStore } from "@/lib/data/store";
-import { Subscription } from "@/types";
+import { Subscription, UserProfile } from "@/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { CreditCard, CheckCircle2, TrendingUp, Filter, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
+interface EnrichedSubscription extends Subscription {
+  user?: UserProfile | null;
+}
+
 export default function AdminSubscriptionsPage() {
-  const [subscriptions, setSubscriptions] = React.useState<Subscription[]>([]);
-  const [statusFilter, setStatusFilter] = React.useState("ALL");
+  const [subscriptions, setSubscriptions] = React.useState<EnrichedSubscription[]>([]);
+  const [statusFilter, setStatusFilter] = React.useState<string>("ALL");
 
   React.useEffect(() => {
-    setSubscriptions(DataStore.getAllSubscriptions());
+    async function loadData() {
+      try {
+        const [allSubs, allUsers] = await Promise.all([
+          DataStore.getAllSubscriptions(),
+          DataStore.getAllUsers(),
+        ]);
+        const userMap = new Map(allUsers.map((u) => [u.id, u]));
+        const enriched: EnrichedSubscription[] = allSubs.map((s) => ({
+          ...s,
+          user: userMap.get(s.user_id) || null,
+        }));
+        setSubscriptions(enriched);
+      } catch (err) {
+        console.error("Failed to load admin subscriptions", err);
+      }
+    }
+    loadData();
   }, []);
 
   const filtered = subscriptions.filter((s) => {
@@ -96,14 +116,12 @@ export default function AdminSubscriptionsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filtered.map((s) => {
-                const user = DataStore.getUserById(s.user_id);
-                return (
-                  <tr key={s.id} className="hover:bg-slate-850/40 transition-colors">
-                    <td className="px-6 py-4">
-                      <p className="font-bold text-white">{user?.full_name || "Subscriber"}</p>
-                      <p className="text-xs text-slate-400">{user?.email}</p>
-                    </td>
+              {filtered.map((s) => (
+                <tr key={s.id} className="hover:bg-slate-850/40 transition-colors">
+                  <td className="px-6 py-4">
+                    <p className="font-bold text-white">{s.user?.full_name || "Subscriber"}</p>
+                    <p className="text-xs text-slate-400">{s.user?.email}</p>
+                  </td>
                     <td className="px-6 py-4 font-mono text-xs text-slate-300">
                       {s.stripe_customer_id}
                     </td>
@@ -122,8 +140,7 @@ export default function AdminSubscriptionsPage() {
                       </Badge>
                     </td>
                   </tr>
-                );
-              })}
+                ))}
             </tbody>
           </table>
         </div>

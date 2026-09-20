@@ -12,7 +12,15 @@ export default function AdminSettingsPage() {
   const [auditLogs, setAuditLogs] = React.useState<AuditLog[]>([]);
 
   React.useEffect(() => {
-    setAuditLogs(DataStore.getAuditLogs());
+    async function loadLogs() {
+      try {
+        const logs = await DataStore.getAuditLogs();
+        setAuditLogs(logs);
+      } catch (err) {
+        console.error("Failed to load audit logs:", err);
+      }
+    }
+    loadLogs();
   }, []);
 
   return (

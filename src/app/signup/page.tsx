@@ -24,14 +24,21 @@ export default function SignupPage() {
   const [isLoading, setIsLoading] = React.useState(false);
 
   React.useEffect(() => {
-    const list = DataStore.getCharities();
-    setCharities(list);
-    if (list.length > 0) {
-      setSelectedCharityId(list[0].id);
+    async function loadCharities() {
+      try {
+        const list = await DataStore.getCharities();
+        setCharities(list);
+        if (list.length > 0) {
+          setSelectedCharityId(list[0].id);
+        }
+      } catch (err) {
+        console.error("Failed to load charities", err);
+      }
     }
+    loadCharities();
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
@@ -48,18 +55,49 @@ export default function SignupPage() {
     setIsLoading(true);
 
     try {
-      DataStore.signupUser({
-        fullName,
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
-        charityId: selectedCharityId,
-        contributionPercentage,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+          },
+        },
       });
 
-      setTimeout(() => {
+      if (authError) {
         setIsLoading(false);
-        // Redirect toward subscription onboarding / dashboard
-        router.push("/dashboard/subscription");
-      }, 700);
+        setError(authError.message);
+        return;
+      }
+
+      if (!authData.user) {
+        setIsLoading(false);
+        setError("Failed to create user account. Please try again.");
+        return;
+      }
+
+      // Upsert profile with strictly 'user' role
+      const { error: profileError } = await supabase.from("profiles").upsert({
+        id: authData.user.id,
+        email: email.toLowerCase(),
+        full_name: fullName,
+        role: "user",
+        handicap: 18.0,
+        updated_at: new Date().toISOString(),
+      });
+
+      if (profileError) {
+        console.error("Profile creation error:", profileError.message);
+      }
+
+      // Save user charity pledge
+      await DataStore.setUserCharity(authData.user.id, selectedCharityId, contributionPercentage);
+
+      setIsLoading(false);
+      router.push("/dashboard/subscription");
     } catch (err: unknown) {
       setIsLoading(false);
       setError(err instanceof Error ? err.message : "Failed to create account");

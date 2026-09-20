@@ -27,8 +27,15 @@ export default function CharityDetailPage() {
   const [pledgePushed, setPledgePushed] = React.useState(false);
 
   React.useEffect(() => {
-    const found = DataStore.getCharityById(charityId);
-    if (found) setCharity(found);
+    async function loadCharity() {
+      try {
+        const found = await DataStore.getCharityById(charityId);
+        if (found) setCharity(found);
+      } catch (err) {
+        console.error("Failed to load charity:", err);
+      }
+    }
+    loadCharity();
   }, [charityId]);
 
   if (!charity) {
@@ -42,13 +49,22 @@ export default function CharityDetailPage() {
     );
   }
 
-  const handleSelectAsPledge = () => {
-    const active = DataStore.getCurrentUser();
-    DataStore.setUserCharity(active.id, charity.id, 20);
-    setPledgePushed(true);
-    setTimeout(() => {
-      router.push("/dashboard/charity");
-    }, 1500);
+  const handleSelectAsPledge = async () => {
+    try {
+      const active = await DataStore.getCurrentUser();
+      if (!active) {
+        router.push("/login");
+        return;
+      }
+      await DataStore.setUserCharity(active.id, charity.id, 20);
+      setPledgePushed(true);
+      setTimeout(() => {
+        router.push("/dashboard/charity");
+      }, 1500);
+    } catch (err) {
+      console.error("Failed to set charity pledge:", err);
+      alert("Failed to update charity pledge.");
+    }
   };
 
   return (

@@ -33,10 +33,18 @@ import {
 } from "recharts";
 
 export default function AdminOverviewPage() {
-  const [analytics, setAnalytics] = React.useState<ReturnType<typeof DataStore.getAdminAnalytics> | null>(null);
+  const [analytics, setAnalytics] = React.useState<Awaited<ReturnType<typeof DataStore.getAdminAnalytics>> | null>(null);
 
   React.useEffect(() => {
-    setAnalytics(DataStore.getAdminAnalytics());
+    async function load() {
+      try {
+        const data = await DataStore.getAdminAnalytics();
+        setAnalytics(data);
+      } catch (err) {
+        console.error("Failed to load admin analytics", err);
+      }
+    }
+    load();
   }, []);
 
   if (!analytics) return null;

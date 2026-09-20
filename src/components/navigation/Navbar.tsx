@@ -26,18 +26,19 @@ export function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
   React.useEffect(() => {
-    // Initial active user from store
-    setCurrentUser(DataStore.getCurrentUser());
-  }, []);
-
-  const handleRoleToggle = (role: "user" | "admin") => {
-    const updated = DataStore.switchDemoRole(role);
-    setCurrentUser({ ...updated });
-    if (role === "admin") {
-      router.push("/admin");
-    } else {
-      router.push("/dashboard");
+    async function fetchUser() {
+      const user = await DataStore.getCurrentUser();
+      setCurrentUser(user);
     }
+    fetchUser();
+  }, [pathname]);
+
+  const handleSignOut = async () => {
+    const { createClient } = await import("@/lib/supabase/client");
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    setCurrentUser(null);
+    router.push("/login");
   };
 
   const navLinks = [
@@ -53,43 +54,6 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-xl">
-      {/* Top Demo Banner & Role Quick Switcher for Evaluator */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 border-b border-slate-800/50 px-4 py-1.5 text-xs text-slate-300">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-medium text-slate-200">Production Evaluation Environment</span>
-            <span className="hidden sm:inline text-slate-500">|</span>
-            <span className="hidden sm:inline text-slate-400">
-              Active Mode: <strong className="text-emerald-400 font-semibold uppercase">{currentUser?.role || "user"}</strong> ({currentUser?.full_name})
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-slate-400">Switch Evaluator Persona:</span>
-            <button
-              onClick={() => handleRoleToggle("user")}
-              className={`px-2.5 py-0.5 rounded-full font-medium transition-colors ${
-                currentUser?.role === "user"
-                  ? "bg-brand-500 text-slate-950 font-bold"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-              }`}
-            >
-              Subscriber
-            </button>
-            <button
-              onClick={() => handleRoleToggle("admin")}
-              className={`px-2.5 py-0.5 rounded-full font-medium transition-colors ${
-                currentUser?.role === "admin"
-                  ? "bg-amber-500 text-slate-950 font-bold"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-              }`}
-            >
-              Admin
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* Main Navbar */}
       <div className="max-w-7xl mx-auto flex h-16 items-center justify-between px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-8">
@@ -137,16 +101,18 @@ export function Navbar() {
             </Link>
           )}
 
-          <Link href="/dashboard">
-            <Button
-              variant={isDashboardRoute ? "primary" : "secondary"}
-              size="sm"
-              className="gap-2 text-xs"
-            >
-              <LayoutDashboard className="h-4 w-4" />
-              Subscriber Portal
-            </Button>
-          </Link>
+          {currentUser && (
+            <Link href="/dashboard">
+              <Button
+                variant={isDashboardRoute ? "primary" : "secondary"}
+                size="sm"
+                className="gap-2 text-xs"
+              >
+                <LayoutDashboard className="h-4 w-4" />
+                Subscriber Portal
+              </Button>
+            </Link>
+          )}
 
           {!currentUser ? (
             <div className="flex items-center gap-2">
@@ -163,13 +129,20 @@ export function Navbar() {
             </div>
           ) : (
             <div className="flex items-center gap-3 pl-2 border-l border-slate-800">
-              <div className="h-8 w-8 rounded-full flex items-center justify-center bg-slate-800 border border-slate-700 text-brand-400 font-bold text-xs uppercase shadow-sm">
+              <div className="h-8 w-8 rounded-full flex items-center justify-center bg-slate-800 border border-slate-700 text-brand-400 font-bold text-xs uppercase shadow-sm" title={currentUser.email}>
                 {currentUser.role === "admin" ? (
                   <ShieldCheck className="h-4 w-4 text-amber-400" />
                 ) : (
                   currentUser.full_name?.charAt(0) || <User className="h-4 w-4 text-brand-400" />
                 )}
               </div>
+              <button
+                onClick={handleSignOut}
+                className="p-1.5 text-slate-400 hover:text-red-400 transition-colors rounded-lg hover:bg-slate-900"
+                title="Sign out"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
             </div>
           )}
         </div>

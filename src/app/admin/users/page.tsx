@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DataStore } from "@/lib/data/store";
-import { UserProfile } from "@/types";
+import { UserProfile, Subscription, UserCharity, Charity } from "@/types";
 import { formatDate } from "@/lib/utils";
 import { Users, Search, Filter, ShieldCheck, User as UserIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,23 +10,58 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
+interface EnrichedUser extends UserProfile {
+  subscription?: Subscription | null;
+  userCharity?: UserCharity;
+  charity?: Charity;
+}
+
 export default function AdminUsersPage() {
   const [query, setQuery] = React.useState("");
   const [roleFilter, setRoleFilter] = React.useState("all");
   const [currentPage, setCurrentPage] = React.useState(1);
-  const [usersData, setUsersData] = React.useState<{ users: UserProfile[]; total: number }>({
+  const [usersData, setUsersData] = React.useState<{ users: EnrichedUser[]; total: number }>({
     users: [],
     total: 0,
   });
 
-  const loadUsers = React.useCallback(() => {
-    const res = DataStore.getAllUsers({
-      query,
-      role: roleFilter,
-      page: currentPage,
-      limit: 10,
-    });
-    setUsersData(res);
+  const loadUsers = React.useCallback(async () => {
+    try {
+      const [allUsers, allSubs] = await Promise.all([
+        DataStore.getAllUsers(),
+        DataStore.getAllSubscriptions(),
+      ]);
+
+      let filtered = allUsers;
+      if (roleFilter !== "all") {
+        filtered = filtered.filter((u) => u.role === roleFilter);
+      }
+      if (query.trim()) {
+        const q = query.toLowerCase();
+        filtered = filtered.filter(
+          (u) => u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
+        );
+      }
+
+      const enriched: EnrichedUser[] = await Promise.all(
+        filtered.map(async (u) => {
+          const sub = allSubs.find((s) => s.user_id === u.id) || null;
+          const uc = await DataStore.getUserCharity(u.id);
+          return {
+            ...u,
+            subscription: sub,
+            userCharity: uc.userCharity,
+            charity: uc.charity,
+          };
+        })
+      );
+
+      const pageStart = (currentPage - 1) * 10;
+      const paginated = enriched.slice(pageStart, pageStart + 10);
+      setUsersData({ users: paginated, total: enriched.length });
+    } catch (err) {
+      console.error("Failed to load users", err);
+    }
   }, [query, roleFilter, currentPage]);
 
   React.useEffect(() => {
@@ -101,8 +136,8 @@ export default function AdminUsersPage() {
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {usersData.users.map((u) => {
-                const sub = DataStore.getUserSubscription(u.id);
-                const uc = DataStore.getUserCharity(u.id);
+                const sub = u.subscription;
+                const uc = { userCharity: u.userCharity, charity: u.charity };
 
                 return (
                   <tr key={u.id} className="hover:bg-slate-850/40 transition-colors">

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DataStore } from "@/lib/data/store";
-import { Winner } from "@/types";
+import { Winner, UserProfile } from "@/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   Award,
@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 
 export default function DashboardWinningsPage() {
-  const [currentUser, setCurrentUser] = React.useState(DataStore.getCurrentUser());
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [winners, setWinners] = React.useState<Winner[]>([]);
   const [selectedWinner, setSelectedWinner] = React.useState<Winner | null>(null);
 
@@ -33,10 +33,16 @@ export default function DashboardWinningsPage() {
   const [proofNotes, setProofNotes] = React.useState("");
   const [uploadFeedback, setUploadFeedback] = React.useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  const loadWinners = React.useCallback(() => {
-    const user = DataStore.getCurrentUser();
-    setCurrentUser(user);
-    setWinners(DataStore.getUserWinners(user.id));
+  const loadWinners = React.useCallback(async () => {
+    try {
+      const user = await DataStore.getCurrentUser();
+      if (!user) return;
+      setCurrentUser(user);
+      const userWinners = await DataStore.getUserWinners(user.id);
+      setWinners(userWinners);
+    } catch (err) {
+      console.error("Failed to load user winners", err);
+    }
   }, []);
 
   React.useEffect(() => {
@@ -59,12 +65,12 @@ export default function DashboardWinningsPage() {
     setIsUploadOpen(true);
   };
 
-  const handleSubmitProof = (e: React.FormEvent) => {
+  const handleSubmitProof = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedWinner) return;
 
     try {
-      DataStore.submitWinnerProof(selectedWinner.id, {
+      await DataStore.submitWinnerProof(selectedWinner.id, {
         fileUrl,
         fileName,
         fileSize: 1024 * 350, // 350 KB
@@ -74,17 +80,17 @@ export default function DashboardWinningsPage() {
 
       setUploadFeedback({
         type: "success",
-        message: "Scorecard proof uploaded successfully! Compliance review is now underway.",
+        message: "Scorecard proof uploaded successfully! A compliance officer will review it shortly.",
       });
 
+      await loadWinners();
       setTimeout(() => {
         setIsUploadOpen(false);
-        loadWinners();
-      }, 1500);
+      }, 2000);
     } catch (err: unknown) {
       setUploadFeedback({
         type: "error",
-        message: err instanceof Error ? err.message : "Failed to submit proof.",
+        message: err instanceof Error ? err.message : "Failed to submit verification proof.",
       });
     }
   };

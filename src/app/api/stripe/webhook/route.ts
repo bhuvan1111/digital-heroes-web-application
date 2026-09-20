@@ -30,8 +30,8 @@ export async function POST(req: NextRequest) {
         const userId = session.metadata?.userId;
         const plan = (session.metadata?.plan || "monthly") as "monthly" | "yearly";
         if (userId) {
-          DataStore.updateSubscriptionPlan(userId, plan);
-          DataStore.logAudit({
+          await DataStore.updateSubscriptionPlan(userId, plan);
+          await DataStore.logAudit({
             action: "SUBSCRIPTION_CREATED",
             entity: "subscriptions",
             entityId: session.id,
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
-        DataStore.logAudit({
+        await DataStore.logAudit({
           action: `STRIPE_${event.type.toUpperCase()}`,
           entity: "subscriptions",
           entityId: sub.id,
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       }
       case "invoice.payment_failed": {
         const invoice = event.data.object as Stripe.Invoice;
-        DataStore.logAudit({
+        await DataStore.logAudit({
           action: "PAYMENT_FAILED",
           entity: "invoices",
           entityId: invoice.id,

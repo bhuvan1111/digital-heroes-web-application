@@ -27,11 +27,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
 
   React.useEffect(() => {
-    const user = DataStore.getCurrentUser();
-    setCurrentUser(user);
-    if (!user || user.role !== "admin") {
-      router.push("/dashboard");
+    async function checkAdmin() {
+      try {
+        const user = await DataStore.getCurrentUser();
+        if (!user || user.role !== "admin") {
+          router.push("/dashboard/overview");
+          return;
+        }
+        setCurrentUser(user);
+      } catch (err) {
+        console.error("Admin layout verification error:", err);
+        router.push("/dashboard/overview");
+      }
     }
+    checkAdmin();
   }, [pathname, router]);
 
 

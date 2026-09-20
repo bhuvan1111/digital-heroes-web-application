@@ -34,27 +34,35 @@ function DonateContent() {
   const [isLoading, setIsLoading] = React.useState(false);
 
   React.useEffect(() => {
-    const list = DataStore.getCharities();
-    setCharities(list);
-    if (preselectedId && list.some((c) => c.id === preselectedId)) {
-      setSelectedCharityId(preselectedId);
-    } else if (list.length > 0) {
-      setSelectedCharityId(list[0].id);
+    async function loadCharities() {
+      try {
+        const list = await DataStore.getCharities();
+        setCharities(list);
+        if (preselectedId && list.some((c) => c.id === preselectedId)) {
+          setSelectedCharityId(preselectedId);
+        } else if (list.length > 0) {
+          setSelectedCharityId(list[0].id);
+        }
+      } catch (err) {
+        console.error("Failed to load charities:", err);
+      }
     }
+    loadCharities();
   }, [preselectedId]);
 
   const activeCharity = charities.find((c) => c.id === selectedCharityId);
   const finalAmount = customAmount ? Number(customAmount) : amount;
 
-  const handleDonate = (e: React.FormEvent) => {
+  const handleDonate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeCharity || finalAmount <= 0) return;
 
     setIsLoading(true);
-    setTimeout(() => {
-      // Record donation in store
-      activeCharity.total_received += finalAmount;
-      DataStore.logAudit({
+    try {
+      await DataStore.updateCharity(activeCharity.id, {
+        total_received: (activeCharity.total_received || 0) + finalAmount,
+      });
+      await DataStore.logAudit({
         action: "INDEPENDENT_DONATION_COMPLETED",
         entity: "charities",
         entityId: activeCharity.id,
@@ -65,10 +73,13 @@ function DonateContent() {
           charity: activeCharity.name,
         },
       });
-
-      setIsLoading(false);
       setIsSuccess(true);
-    }, 800);
+    } catch (err) {
+      console.error("Failed to process donation:", err);
+      alert("Failed to process donation. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

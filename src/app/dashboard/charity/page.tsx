@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DataStore } from "@/lib/data/store";
-import { Charity, UserCharity, Subscription } from "@/types";
+import { Charity, UserCharity, Subscription, UserProfile } from "@/types";
 import { FinancialService } from "@/lib/services/financial-service";
 import { formatCurrency, formatCents } from "@/lib/utils";
 import {
@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
 export default function DashboardCharityPage() {
-  const [currentUser, setCurrentUser] = React.useState(DataStore.getCurrentUser());
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [allCharities, setAllCharities] = React.useState<Charity[]>([]);
   const [selectedCharityId, setSelectedCharityId] = React.useState("");
   const [percentage, setPercentage] = React.useState(20);
@@ -28,21 +28,31 @@ export default function DashboardCharityPage() {
   const [savedFeedback, setSavedFeedback] = React.useState(false);
 
   React.useEffect(() => {
-    const user = DataStore.getCurrentUser();
-    setCurrentUser(user);
-    const charities = DataStore.getCharities();
-    setAllCharities(charities);
-    const sub = DataStore.getUserSubscription(user.id);
-    if (sub) setSubscription(sub);
+    async function load() {
+      try {
+        const user = await DataStore.getCurrentUser();
+        if (!user) return;
+        setCurrentUser(user);
+        const [charities, sub, uc] = await Promise.all([
+          DataStore.getCharities(),
+          DataStore.getUserSubscription(user.id),
+          DataStore.getUserCharity(user.id),
+        ]);
+        setAllCharities(charities);
+        if (sub) setSubscription(sub);
 
-    const uc = DataStore.getUserCharity(user.id);
-    if (uc.userCharity) {
-      setSelectedCharityId(uc.userCharity.charity_id);
-      setPercentage(uc.userCharity.contribution_percentage);
-    } else if (charities.length > 0) {
-      setSelectedCharityId(charities[0].id);
-      setPercentage(10);
+        if (uc.userCharity) {
+          setSelectedCharityId(uc.userCharity.charity_id);
+          setPercentage(uc.userCharity.contribution_percentage);
+        } else if (charities.length > 0) {
+          setSelectedCharityId(charities[0].id);
+          setPercentage(10);
+        }
+      } catch (err) {
+        console.error("Failed to load charity pledge", err);
+      }
     }
+    load();
   }, []);
 
   const activeCharity = allCharities.find((c) => c.id === selectedCharityId);
@@ -51,11 +61,16 @@ export default function DashboardCharityPage() {
   const plan = subscription?.plan || "monthly";
   const breakdown = FinancialService.getFinancialBreakdown(plan, percentage);
 
-  const handleSavePledge = (e: React.FormEvent) => {
+  const handleSavePledge = async (e: React.FormEvent) => {
     e.preventDefault();
-    DataStore.setUserCharity(currentUser.id, selectedCharityId, percentage);
-    setSavedFeedback(true);
-    setTimeout(() => setSavedFeedback(false), 3000);
+    if (!currentUser) return;
+    try {
+      await DataStore.setUserCharity(currentUser.id, selectedCharityId, percentage);
+      setSavedFeedback(true);
+      setTimeout(() => setSavedFeedback(false), 3000);
+    } catch (err) {
+      console.error("Failed to save pledge", err);
+    }
   };
 
   return (

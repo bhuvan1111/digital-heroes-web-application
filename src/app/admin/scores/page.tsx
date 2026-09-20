@@ -2,24 +2,43 @@
 
 import * as React from "react";
 import { DataStore } from "@/lib/data/store";
-import { GolfScore } from "@/types";
+import { GolfScore, UserProfile } from "@/types";
 import { formatDate } from "@/lib/utils";
 import { Trophy, Search, Filter } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
+interface EnrichedScore extends GolfScore {
+  user?: UserProfile | null;
+}
+
 export default function AdminScoresPage() {
-  const [scores, setScores] = React.useState<GolfScore[]>([]);
+  const [scores, setScores] = React.useState<EnrichedScore[]>([]);
   const [search, setSearch] = React.useState("");
 
   React.useEffect(() => {
-    setScores(DataStore.getAllScores());
+    async function loadData() {
+      try {
+        const [allScores, allUsers] = await Promise.all([
+          DataStore.getAllScores(),
+          DataStore.getAllUsers(),
+        ]);
+        const userMap = new Map(allUsers.map((u) => [u.id, u]));
+        const enriched: EnrichedScore[] = allScores.map((s) => ({
+          ...s,
+          user: userMap.get(s.user_id) || null,
+        }));
+        setScores(enriched);
+      } catch (err) {
+        console.error("Failed to load admin scores", err);
+      }
+    }
+    loadData();
   }, []);
 
   const filtered = scores.filter((s) => {
-    const user = DataStore.getUserById(s.user_id);
-    const text = `${user?.full_name || ""} ${user?.email || ""} ${s.course_name || ""}`.toLowerCase();
+    const text = `${s.user?.full_name || ""} ${s.user?.email || ""} ${s.course_name || ""}`.toLowerCase();
     return text.includes(search.toLowerCase());
   });
 
@@ -65,14 +84,12 @@ export default function AdminScoresPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filtered.map((s) => {
-                const user = DataStore.getUserById(s.user_id);
-                return (
-                  <tr key={s.id} className="hover:bg-slate-850/40 transition-colors">
-                    <td className="px-6 py-4">
-                      <p className="font-bold text-white">{user?.full_name || "Marcus Vance"}</p>
-                      <p className="text-xs text-slate-400">{user?.email}</p>
-                    </td>
+              {filtered.map((s) => (
+                <tr key={s.id} className="hover:bg-slate-850/40 transition-colors">
+                  <td className="px-6 py-4">
+                    <p className="font-bold text-white">{s.user?.full_name || "Unknown Player"}</p>
+                    <p className="text-xs text-slate-400">{s.user?.email}</p>
+                  </td>
                     <td className="px-6 py-4">
                       <span className="inline-flex items-center justify-center h-8 w-8 rounded-lg bg-brand-500/15 border border-brand-500/30 text-brand-400 font-extrabold text-sm">
                         {s.score}
@@ -88,8 +105,7 @@ export default function AdminScoresPage() {
                       {s.notes || "—"}
                     </td>
                   </tr>
-                );
-              })}
+                ))}
             </tbody>
           </table>
         </div>

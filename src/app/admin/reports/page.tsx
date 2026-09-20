@@ -28,14 +28,26 @@ import {
 } from "recharts";
 
 export default function AdminReportsPage() {
-  const [analytics, setAnalytics] = React.useState<ReturnType<typeof DataStore.getAdminAnalytics> | null>(null);
+  const [analytics, setAnalytics] = React.useState<Awaited<ReturnType<typeof DataStore.getAdminAnalytics>> | null>(null);
   const [drawsCount, setDrawsCount] = React.useState(0);
   const [winnersCount, setWinnersCount] = React.useState(0);
 
   React.useEffect(() => {
-    setAnalytics(DataStore.getAdminAnalytics());
-    setDrawsCount(DataStore.getDraws().length);
-    setWinnersCount(DataStore.getWinners().length);
+    async function loadReports() {
+      try {
+        const [adminAnalytics, draws, winners] = await Promise.all([
+          DataStore.getAdminAnalytics(),
+          DataStore.getDraws(),
+          DataStore.getWinners(),
+        ]);
+        setAnalytics(adminAnalytics);
+        setDrawsCount(draws.length);
+        setWinnersCount(winners.length);
+      } catch (err) {
+        console.error("Failed to load reports", err);
+      }
+    }
+    loadReports();
   }, []);
 
   if (!analytics) return null;

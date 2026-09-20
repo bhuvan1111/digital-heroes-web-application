@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DataStore } from "@/lib/data/store";
-import { Winner, WinnerStatus } from "@/types";
+import { Winner, WinnerStatus, UserProfile } from "@/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   Award,
@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 
 export default function AdminWinnersPage() {
-  const [currentUser] = React.useState(DataStore.getCurrentUser());
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [winners, setWinners] = React.useState<Winner[]>([]);
   const [filterStatus, setFilterStatus] = React.useState<string>("ALL");
   const [feedback, setFeedback] = React.useState<string | null>(null);
@@ -33,8 +33,15 @@ export default function AdminWinnersPage() {
   const [adminNotes, setAdminNotes] = React.useState("");
   const [paymentRef, setPaymentRef] = React.useState("");
 
-  const loadWinners = React.useCallback(() => {
-    setWinners(DataStore.getWinners(filterStatus));
+  const loadWinners = React.useCallback(async () => {
+    try {
+      const user = await DataStore.getCurrentUser();
+      if (user) setCurrentUser(user);
+      const list = await DataStore.getWinners(filterStatus);
+      setWinners(list);
+    } catch (err) {
+      console.error("Failed to load winners", err);
+    }
   }, [filterStatus]);
 
   React.useEffect(() => {
@@ -48,29 +55,29 @@ export default function AdminWinnersPage() {
     setPaymentRef(`ACH-STRIPE-TRX-${Date.now().toString().slice(-6)}`);
   };
 
-  const handleExecuteAction = (e: React.FormEvent) => {
+  const handleExecuteAction = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedWinner || !reviewAction) return;
+    if (!selectedWinner || !reviewAction || !currentUser) return;
 
     try {
       if (reviewAction === "APPROVE") {
-        DataStore.approveWinner(selectedWinner.id, currentUser.id, adminNotes);
+        await DataStore.approveWinner(selectedWinner.id, currentUser.id, adminNotes);
         setFeedback(`Winner claim approved! Payout created in pending ledger.`);
       } else if (reviewAction === "REJECT") {
         if (!adminNotes || adminNotes.trim().length === 0) {
           alert("A rejection reason is mandatory.");
           return;
         }
-        DataStore.rejectWinner(selectedWinner.id, currentUser.id, adminNotes);
+        await DataStore.rejectWinner(selectedWinner.id, currentUser.id, adminNotes);
         setFeedback(`Winner claim rejected with recorded rationale.`);
       } else if (reviewAction === "PAY") {
-        DataStore.markWinnerPaid(selectedWinner.id, currentUser.id, paymentRef);
+        await DataStore.markWinnerPaid(selectedWinner.id, currentUser.id, paymentRef);
         setFeedback(`Payout marked as PAID with reference ${paymentRef}!`);
       }
 
       setSelectedWinner(null);
       setReviewAction(null);
-      loadWinners();
+      await loadWinners();
       setTimeout(() => setFeedback(null), 3500);
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Action failed");

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DataStore } from "@/lib/data/store";
-import { GolfScore } from "@/types";
+import { GolfScore, UserProfile } from "@/types";
 import { formatDate } from "@/lib/utils";
 import {
   Trophy,
@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 
 export default function DashboardScoresPage() {
-  const [currentUser, setCurrentUser] = React.useState(DataStore.getCurrentUser());
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [scores, setScores] = React.useState<GolfScore[]>([]);
   const [feedback, setFeedback] = React.useState<{ type: "success" | "error"; message: string } | null>(null);
 
@@ -37,10 +37,16 @@ export default function DashboardScoresPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false);
   const [scoreToDelete, setScoreToDelete] = React.useState<GolfScore | null>(null);
 
-  const loadScores = React.useCallback(() => {
-    const user = DataStore.getCurrentUser();
-    setCurrentUser(user);
-    setScores(DataStore.getUserScores(user.id));
+  const loadScores = React.useCallback(async () => {
+    try {
+      const user = await DataStore.getCurrentUser();
+      if (!user) return;
+      setCurrentUser(user);
+      const userScores = await DataStore.getUserScores(user.id);
+      setScores(userScores);
+    } catch (err) {
+      console.error("Failed to load scores", err);
+    }
   }, []);
 
   React.useEffect(() => {
@@ -67,62 +73,71 @@ export default function DashboardScoresPage() {
     setIsModalOpen(true);
   };
 
-  const handleSaveScore = (e: React.FormEvent) => {
+  const handleSaveScore = async (e: React.FormEvent) => {
     e.preventDefault();
     setFeedback(null);
+    if (!currentUser) return;
 
-    if (editingScore) {
-      // Update
-      const res = DataStore.updateScore(
-        currentUser.id,
-        editingScore.id,
-        Number(scoreValue),
-        playedDate,
-        courseName,
-        notes
-      );
-      if (!res.success) {
-        setFeedback({ type: "error", message: res.error || "Failed to update score." });
-        return;
+    try {
+      if (editingScore) {
+        // Update
+        const res = await DataStore.updateScore(
+          currentUser.id,
+          editingScore.id,
+          Number(scoreValue),
+          playedDate,
+          courseName,
+          notes
+        );
+        if (!res.success) {
+          setFeedback({ type: "error", message: res.error || "Failed to update score." });
+          return;
+        }
+        setFeedback({ type: "success", message: "Score updated successfully." });
+      } else {
+        // Add (Rolling logic applies automatically: if 5 exist, oldest is replaced)
+        const res = await DataStore.addScore(
+          currentUser.id,
+          Number(scoreValue),
+          playedDate,
+          courseName,
+          notes
+        );
+        if (!res.success) {
+          setFeedback({ type: "error", message: res.error || "Failed to record score." });
+          return;
+        }
+        setFeedback({
+          type: "success",
+          message:
+            scores.length >= 5
+              ? "New score added! Your oldest score was automatically archived to preserve the 5-round ticket window."
+              : "Score added to your active draw ticket.",
+        });
       }
-      setFeedback({ type: "success", message: "Score updated successfully." });
-    } else {
-      // Add (Rolling logic applies automatically: if 5 exist, oldest is replaced)
-      const res = DataStore.addScore(
-        currentUser.id,
-        Number(scoreValue),
-        playedDate,
-        courseName,
-        notes
-      );
-      if (!res.success) {
-        setFeedback({ type: "error", message: res.error || "Failed to record score." });
-        return;
-      }
-      setFeedback({
-        type: "success",
-        message:
-          scores.length >= 5
-            ? "New score added! Your oldest score was automatically archived to preserve the 5-round ticket window."
-            : "Score added to your active draw ticket.",
-      });
+
+      setIsModalOpen(false);
+      await loadScores();
+    } catch (err: unknown) {
+      setFeedback({ type: "error", message: err instanceof Error ? err.message : "An error occurred." });
     }
-
-    setIsModalOpen(false);
-    loadScores();
   };
 
-  const handleDelete = () => {
-    if (!scoreToDelete) return;
-    const res = DataStore.deleteScore(currentUser.id, scoreToDelete.id);
-    if (!res.success) {
-      setFeedback({ type: "error", message: res.error || "Failed to delete score." });
-    } else {
-      setFeedback({ type: "success", message: "Score deleted successfully." });
+  const handleDelete = async () => {
+    if (!scoreToDelete || !currentUser) return;
+    try {
+      const res = await DataStore.deleteScore(currentUser.id, scoreToDelete.id);
+      if (!res.success) {
+        setFeedback({ type: "error", message: res.error || "Failed to delete score." });
+      } else {
+        setFeedback({ type: "success", message: "Score deleted successfully." });
+      }
+      setDeleteConfirmOpen(false);
+      setScoreToDelete(null);
+      await loadScores();
+    } catch (err: unknown) {
+      setFeedback({ type: "error", message: err instanceof Error ? err.message : "Failed to delete score." });
     }
-    setDeleteConfirmOpen(false);
-    setScoreToDelete(null);
-    loadScores();
   };
 
   return (

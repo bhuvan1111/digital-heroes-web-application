@@ -3,50 +3,60 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { DataStore } from "@/lib/data/store";
-import { Trophy, ArrowRight, ShieldCheck, User } from "lucide-react";
+import { Trophy, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = React.useState("user@digitalheroes.golf");
-  const [password, setPassword] = React.useState("UserPassword123!");
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
   const [error, setError] = React.useState("");
   const [isLoading, setIsLoading] = React.useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setIsLoading(true);
 
     try {
-      const user = DataStore.loginWithEmail(email);
-      setTimeout(() => {
+      const supabase = createClient();
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError) {
         setIsLoading(false);
-        if (user.role === "admin") {
-          router.push("/admin");
-        } else {
-          router.push("/dashboard/overview");
-        }
-      }, 600);
+        setError(authError.message);
+        return;
+      }
+
+      if (!data.user) {
+        setIsLoading(false);
+        setError("Sign in failed. Please try again.");
+        return;
+      }
+
+      // Check role from profiles table
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", data.user.id)
+        .maybeSingle();
+
+      setIsLoading(false);
+      if (profile?.role === "admin") {
+        router.push("/admin");
+      } else {
+        router.push("/dashboard/overview");
+      }
     } catch (err: unknown) {
       setIsLoading(false);
       setError(err instanceof Error ? err.message : "Failed to sign in");
     }
-  };
-
-  const fillSubscriberDemo = () => {
-    setEmail("user@digitalheroes.golf");
-    setPassword("UserPassword123!");
-    setError("");
-  };
-
-  const fillAdminDemo = () => {
-    setEmail("admin@digitalheroes.golf");
-    setPassword("AdminPassword123!");
-    setError("");
   };
 
   return (
@@ -63,29 +73,6 @@ export default function LoginPage() {
           <p className="mt-2 text-sm text-slate-400">
             Access your Stableford scores, monthly draw tickets, and charity impact.
           </p>
-        </div>
-
-        {/* Quick Demo Fill Box for Evaluators */}
-        <div className="p-4 rounded-xl border border-brand-500/30 bg-brand-950/20 text-xs text-slate-300 space-y-2">
-          <p className="font-semibold text-brand-400">⚡ Evaluator Quick Credentials</p>
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <button
-              type="button"
-              onClick={fillSubscriberDemo}
-              className="py-1.5 px-2.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-brand-500 text-slate-200 text-left transition-colors flex items-center gap-1.5"
-            >
-              <User className="h-3.5 w-3.5 text-brand-400" />
-              <span>Subscriber Demo</span>
-            </button>
-            <button
-              type="button"
-              onClick={fillAdminDemo}
-              className="py-1.5 px-2.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-amber-500 text-slate-200 text-left transition-colors flex items-center gap-1.5"
-            >
-              <ShieldCheck className="h-3.5 w-3.5 text-amber-400" />
-              <span>Admin Demo</span>
-            </button>
-          </div>
         </div>
 
         <Card className="p-8 border-slate-800">

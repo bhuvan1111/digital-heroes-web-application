@@ -1,7 +1,8 @@
 "use client";
-
+import * as React from "react";
 import Link from "next/link";
 import { DataStore } from "@/lib/data/store";
+import { Charity, Draw } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 import {
   Trophy,
@@ -22,9 +23,27 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 
 export default function HomePage() {
-  const featuredCharities = DataStore.getFeaturedCharities();
-  const upcomingDraw = DataStore.getUpcomingDraw();
-  const latestDraw = DataStore.getLatestPublishedDraw();
+  const [featuredCharities, setFeaturedCharities] = React.useState<Charity[]>([]);
+  const [upcomingDraw, setUpcomingDraw] = React.useState<Draw | null>(null);
+  const [latestDraw, setLatestDraw] = React.useState<Draw | null>(null);
+
+  React.useEffect(() => {
+    async function loadHomeData() {
+      try {
+        const [charities, upcoming, latest] = await Promise.all([
+          DataStore.getFeaturedCharities(),
+          DataStore.getUpcomingDraw(),
+          DataStore.getLatestPublishedDraw(),
+        ]);
+        setFeaturedCharities(charities);
+        setUpcomingDraw(upcoming || null);
+        setLatestDraw(latest || null);
+      } catch (err) {
+        console.error("Failed to load home page data:", err);
+      }
+    }
+    loadHomeData();
+  }, []);
 
   return (
     <div className="flex flex-col min-h-screen">

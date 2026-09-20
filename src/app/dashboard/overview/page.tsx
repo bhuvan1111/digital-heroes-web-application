@@ -30,14 +30,28 @@ export default function DashboardOverviewPage() {
   const [userWinners, setUserWinners] = React.useState<Winner[]>([]);
 
   React.useEffect(() => {
-    const user = DataStore.getCurrentUser();
-    setCurrentUser(user);
-    const sub = DataStore.getUserSubscription(user.id);
-    if (sub) setSubscription(sub);
-    setUserCharity(DataStore.getUserCharity(user.id));
-    setScores(DataStore.getUserScores(user.id));
-    setUpcomingDraw(DataStore.getUpcomingDraw() || null);
-    setUserWinners(DataStore.getUserWinners(user.id));
+    async function loadData() {
+      try {
+        const user = await DataStore.getCurrentUser();
+        if (!user) return;
+        setCurrentUser(user);
+        const [sub, uCharity, uScores, upDraw, uWinners] = await Promise.all([
+          DataStore.getUserSubscription(user.id),
+          DataStore.getUserCharity(user.id),
+          DataStore.getUserScores(user.id),
+          DataStore.getUpcomingDraw(),
+          DataStore.getUserWinners(user.id),
+        ]);
+        if (sub) setSubscription(sub);
+        setUserCharity(uCharity);
+        setScores(uScores);
+        setUpcomingDraw(upDraw || null);
+        setUserWinners(uWinners);
+      } catch (err) {
+        console.error("Failed to load overview data", err);
+      }
+    }
+    loadData();
   }, []);
 
   const totalWon = userWinners.reduce((sum, w) => sum + Number(w.prize_amount), 0);

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DataStore } from "@/lib/data/store";
-import { Draw, DrawMode, DrawSimulationResult } from "@/types";
+import { Draw, DrawMode, DrawSimulationResult, UserProfile } from "@/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   Calendar,
@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 
 export default function AdminDrawsPage() {
-  const [currentUser] = React.useState(DataStore.getCurrentUser());
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [draws, setDraws] = React.useState<Draw[]>([]);
   const [selectedDraw, setSelectedDraw] = React.useState<Draw | null>(null);
 
@@ -46,11 +46,17 @@ export default function AdminDrawsPage() {
   const [publishModalOpen, setPublishModalOpen] = React.useState(false);
   const [publishFeedback, setPublishFeedback] = React.useState<string | null>(null);
 
-  const loadDraws = React.useCallback(() => {
-    const list = DataStore.getDraws();
-    setDraws(list);
-    if (!selectedDraw && list.length > 0) {
-      setSelectedDraw(list[0]);
+  const loadDraws = React.useCallback(async () => {
+    try {
+      const user = await DataStore.getCurrentUser();
+      if (user) setCurrentUser(user);
+      const list = await DataStore.getDraws();
+      setDraws(list);
+      if (!selectedDraw && list.length > 0) {
+        setSelectedDraw(list[0]);
+      }
+    } catch (err) {
+      console.error("Failed to load draws", err);
     }
   }, [selectedDraw]);
 
@@ -58,47 +64,49 @@ export default function AdminDrawsPage() {
     loadDraws();
   }, [loadDraws]);
 
-  const handleCreateDraw = (e: React.FormEvent) => {
+  const handleCreateDraw = async (e: React.FormEvent) => {
     e.preventDefault();
-    const created = DataStore.createDraw(
-      {
-        title: newTitle,
-        drawDate: newDate,
-        mode: newMode,
-        totalPrizePool: Number(newPool),
-        jackpotRolloverIn: Number(newRollover),
-      },
-      currentUser.id
-    );
-    setCreateModalOpen(false);
-    setSelectedDraw(created);
-    loadDraws();
+    try {
+      const created = await DataStore.createDraw(
+        {
+          title: newTitle,
+          drawDate: newDate,
+          mode: newMode,
+          totalPrizePool: Number(newPool),
+          jackpotRolloverIn: Number(newRollover),
+        },
+        currentUser?.id
+      );
+      setCreateModalOpen(false);
+      setSelectedDraw(created);
+      await loadDraws();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Failed to create draw");
+    }
   };
 
-  const handleRunSimulation = () => {
+  const handleRunSimulation = async () => {
     if (!selectedDraw) return;
     setSimulating(true);
-    setTimeout(() => {
-      try {
-        const result = DataStore.simulateDraw(selectedDraw.id, selectedDraw.mode, simulationSeed);
-        setSimulationResult(result);
-        setSimulating(false);
-        loadDraws();
-      } catch (err: unknown) {
-        setSimulating(false);
-        alert(err instanceof Error ? err.message : "Simulation failed");
-      }
-    }, 600);
+    try {
+      const result = await DataStore.simulateDraw(selectedDraw.id, selectedDraw.mode, simulationSeed);
+      setSimulationResult(result);
+      setSimulating(false);
+      await loadDraws();
+    } catch (err: unknown) {
+      setSimulating(false);
+      alert(err instanceof Error ? err.message : "Simulation failed");
+    }
   };
 
-  const handleConfirmPublish = () => {
+  const handleConfirmPublish = async () => {
     if (!selectedDraw || !simulationResult) return;
     try {
-      DataStore.publishDraw(selectedDraw.id, simulationResult, currentUser.id);
+      await DataStore.publishDraw(selectedDraw.id, simulationResult, currentUser?.id);
       setPublishFeedback("Official draw published successfully! Official winners created in ledger.");
       setPublishModalOpen(false);
       setSimulationResult(null);
-      loadDraws();
+      await loadDraws();
       setTimeout(() => setPublishFeedback(null), 4000);
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : "Failed to publish draw");

@@ -54,3 +54,34 @@ export function createAdminClient() {
   });
 }
 
+/**
+ * Server-side function to retrieve the currently authenticated user's profile.
+ * 1. Calls supabase.auth.getUser()
+ * 2. Gets the authenticated auth user
+ * 3. Queries profiles using auth user ID
+ * 4. Returns the profile or null
+ */
+export async function getCurrentUser() {
+  const supabase = createClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    return null;
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", user.id)
+    .single();
+
+  if (profileError || !profile) {
+    return null;
+  }
+
+  return profile;
+}
+

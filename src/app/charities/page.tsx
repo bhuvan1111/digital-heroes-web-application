@@ -24,7 +24,15 @@ export default function CharitiesPage() {
   const [donationSuccess, setDonationSuccess] = React.useState(false);
 
   React.useEffect(() => {
-    setCharities(DataStore.getCharities());
+    async function loadCharities() {
+      try {
+        const list = await DataStore.getCharities();
+        setCharities(list);
+      } catch (err) {
+        console.error("Failed to load charities:", err);
+      }
+    }
+    loadCharities();
   }, []);
 
   const categories = ["All", "Veterans & Mental Health", "Environment & Climate", "Youth & Education", "Conservation", "Medical Research"];
@@ -39,16 +47,24 @@ export default function CharitiesPage() {
     return matchesCat && matchesQuery;
   });
 
-  const handleDirectDonate = (e: React.FormEvent) => {
+  const handleDirectDonate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCharityForDonation) return;
-    // Simulate direct non-gameplay donation
-    selectedCharityForDonation.total_received += donationAmount;
-    setDonationSuccess(true);
-    setTimeout(() => {
-      setDonationSuccess(false);
-      setDirectDonateOpen(false);
-    }, 2500);
+    try {
+      const updated = await DataStore.updateCharity(selectedCharityForDonation.id, {
+        total_received: (selectedCharityForDonation.total_received || 0) + donationAmount,
+      });
+      setCharities((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      setSelectedCharityForDonation(updated);
+      setDonationSuccess(true);
+      setTimeout(() => {
+        setDonationSuccess(false);
+        setDirectDonateOpen(false);
+      }, 2500);
+    } catch (err) {
+      console.error("Failed to process donation:", err);
+      alert("Failed to process direct donation. Please try again.");
+    }
   };
 
   return (

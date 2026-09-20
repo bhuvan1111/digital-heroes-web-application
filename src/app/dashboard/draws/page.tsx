@@ -20,15 +20,27 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
 export default function DashboardDrawsPage() {
-  const [currentUser, setCurrentUser] = React.useState<UserProfile>(DataStore.getCurrentUser());
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [draws, setDraws] = React.useState<Draw[]>([]);
   const [scores, setScores] = React.useState<GolfScore[]>([]);
 
   React.useEffect(() => {
-    const user = DataStore.getCurrentUser();
-    setCurrentUser(user);
-    setDraws(DataStore.getDraws());
-    setScores(DataStore.getUserScores(user.id));
+    async function loadData() {
+      try {
+        const user = await DataStore.getCurrentUser();
+        if (!user) return;
+        setCurrentUser(user);
+        const [allDraws, uScores] = await Promise.all([
+          DataStore.getDraws(),
+          DataStore.getUserScores(user.id),
+        ]);
+        setDraws(allDraws);
+        setScores(uScores);
+      } catch (err) {
+        console.error("Failed to load dashboard draws", err);
+      }
+    }
+    loadData();
   }, []);
 
   const userNumbers = scores.map((s) => s.score);

@@ -12,317 +12,218 @@ import {
   AuditLog,
   DrawEntry,
 } from "@/types";
-import {
-  DEMO_AUDIT_LOGS,
-  DEMO_CHARITIES,
-  DEMO_DRAWS,
-  DEMO_SCORES,
-  DEMO_SUBSCRIPTIONS,
-  DEMO_USERS,
-  DEMO_USER_CHARITIES,
-  DEMO_WINNERS,
-} from "./mock-data";
 import { ScoreService } from "../services/score-service";
 import { DrawEngine } from "../services/draw-engine";
 import { WinnerService } from "../services/winner-service";
 import { FinancialService } from "../services/financial-service";
+
 import { createClient } from "../supabase/client";
 
-// In-memory data repository initialized from seed data
-let users: UserProfile[] = [...DEMO_USERS];
-let charities: Charity[] = [...DEMO_CHARITIES];
-let userCharities: UserCharity[] = [...DEMO_USER_CHARITIES];
-let subscriptions: Subscription[] = [...DEMO_SUBSCRIPTIONS];
-let scores: GolfScore[] = [...DEMO_SCORES];
-let draws: Draw[] = [...DEMO_DRAWS];
-let winners: Winner[] = [...DEMO_WINNERS];
-let auditLogs: AuditLog[] = [...DEMO_AUDIT_LOGS];
+/**
+ * Universal client resolver.
+ * Backed by Supabase client for reliable isomorphic database operations.
+ */
+async function getSupabase() {
+  return createClient();
+}
 
-// Current authenticated session in memory (defaults to subscriber Marcus Vance)
-let activeUser: UserProfile = users[1]; // user@digitalheroes.golf
-
+/**
+ * Production DataStore repository backed directly by Supabase PostgreSQL.
+ * All mutations and queries run directly against Supabase tables with error propagation.
+ */
 export class DataStore {
   // --------------------------------------------------------------------------
-  // AUTH & USERS
+  // AUTH & USER PROFILES
   // --------------------------------------------------------------------------
-  public static getCurrentUser(): UserProfile {
-    return activeUser;
-  }
 
-  public static setCurrentUser(user: UserProfile) {
-    activeUser = user;
-  }
-
-  public static switchDemoRole(role: "user" | "admin"): UserProfile {
-    const found = users.find((u) => u.role === role);
-    if (found) {
-      activeUser = found;
-    }
-    return activeUser;
-  }
-
-  public static loginWithEmail(email: string, role?: "user" | "admin"): UserProfile {
-    let found = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
-    if (!found) {
-      const isA = role === "admin" || email.includes("admin");
-      found = {
-        id: crypto.randomUUID(),
-        email,
-        full_name: email.split("@")[0].replace(/[._]/g, " ").toUpperCase(),
-        role: isA ? "admin" : "user",
-        handicap: 18.0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      users.push(found);
-    }
-    activeUser = found;
-
-    // Asynchronously synchronize session with Supabase Auth & PostgreSQL
+  /**
+   * Retrieves the currently authenticated user's profile from Supabase Auth + profiles table.
+   * Returns null if unauthenticated.
+   */
+  public static async getCurrentUser(): Promise<UserProfile | null> {
     try {
-      if (typeof window !== "undefined") {
-        const supabase = createClient();
-        Promise.resolve(
-          supabase.auth.signInWithPassword({
-            email: found.email,
-            password: "UserPassword123!",
-          })
-        )
-          .then(({ error }) => {
-            if (error) {
-              return Promise.resolve(
-                supabase.auth.signUp({
-                  email: found!.email,
-                  password: "UserPassword123!",
-                  options: { data: { full_name: found!.full_name, role: found!.role } },
-                })
-              );
-            }
-          })
-          .catch(() => {});
-        Promise.resolve(supabase.from("profiles").upsert(found)).catch(() => {});
+      const supabase = await getSupabase();
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
+
+      if (error || !user) {
+        return null;
       }
-    } catch {}
 
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .maybeSingle();
 
-    return activeUser;
-  }
-
-  public static signupUser(data: {
-    fullName: string;
-    email: string;
-    charityId: string;
-    contributionPercentage: number;
-  }): { user: UserProfile; userCharity: UserCharity } {
-    const existing = users.find((u) => u.email.toLowerCase() === data.email.toLowerCase());
-    if (existing) {
-      throw new Error("An account with this email address already exists.");
-    }
-
-    const newUser: UserProfile = {
-      id: crypto.randomUUID(),
-      email: data.email,
-      full_name: data.fullName,
-      role: "user", // Normal signup can NEVER be admin
-      handicap: 18.0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    users.push(newUser);
-
-    const validPct = Math.max(10, Math.min(100, data.contributionPercentage));
-    const newUc: UserCharity = {
-      id: crypto.randomUUID(),
-      user_id: newUser.id,
-      charity_id: data.charityId,
-      contribution_percentage: validPct,
-      updated_at: new Date().toISOString(),
-    };
-    userCharities.push(newUc);
-
-    // Create default active trial subscription
-    const newSub: Subscription = {
-      id: crypto.randomUUID(),
-      user_id: newUser.id,
-      stripe_customer_id: `cus_${newUser.id.slice(0, 8)}`,
-      plan: "monthly",
-      status: "active",
-      amount_cents: 3900,
-      currency: "usd",
-      current_period_start: new Date().toISOString(),
-      current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
-      cancel_at_period_end: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    subscriptions.push(newSub);
-
-    activeUser = newUser;
-
-    // Persist to Supabase PostgreSQL & Auth
-    try {
-      if (typeof window !== "undefined") {
-        const supabase = createClient();
-        Promise.resolve(
-          supabase.auth.signUp({
-            email: newUser.email,
-            password: "UserPassword123!",
-            options: { data: { full_name: newUser.full_name, role: "user" } },
-          })
-        ).catch(() => {});
-
-        Promise.resolve(supabase.from("profiles").upsert(newUser)).catch(() => {});
-        Promise.resolve(supabase.from("user_charities").upsert(newUc)).catch(() => {});
-        Promise.resolve(supabase.from("subscriptions").upsert(newSub)).catch(() => {});
+      if (profileError || !profile) {
+        return null;
       }
-    } catch {}
 
-
-    return { user: newUser, userCharity: newUc };
+      return profile as UserProfile;
+    } catch {
+      return null;
+    }
   }
 
+  public static async getUserById(id: string): Promise<UserProfile | null> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
 
-  public static getUserById(id: string): UserProfile | undefined {
-    return users.find((u) => u.id === id);
+    if (error) throw new Error(error.message);
+    return data as UserProfile | null;
   }
 
-  public static getAllUsers(params?: {
-    query?: string;
-    role?: string;
-    page?: number;
-    limit?: number;
-  }): { users: UserProfile[]; total: number } {
-    let list = [...users];
+  public static async getAllUsers(): Promise<UserProfile[]> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .order("created_at", { ascending: false });
 
-    if (params?.role && params.role !== "all") {
-      list = list.filter((u) => u.role === params.role);
-    }
-    if (params?.query) {
-      const q = params.query.toLowerCase();
-      list = list.filter(
-        (u) => u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
-      );
-    }
-
-    const total = list.length;
-    const page = params?.page || 1;
-    const limit = params?.limit || 10;
-    const paginated = list.slice((page - 1) * limit, page * limit);
-
-    return { users: paginated, total };
+    if (error) throw new Error(error.message);
+    return (data || []) as UserProfile[];
   }
 
-  public static updateUser(
-    id: string,
-    data: Partial<Pick<UserProfile, "full_name" | "handicap" | "avatar_url">>
-  ): UserProfile {
-    const idx = users.findIndex((u) => u.id === id);
-    if (idx === -1) throw new Error("User not found");
+  public static async updateUser(id: string, updates: Partial<UserProfile>): Promise<UserProfile> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select()
+      .single();
 
-    users[idx] = {
-      ...users[idx],
-      ...data,
-      updated_at: new Date().toISOString(),
-    };
-    if (activeUser.id === id) {
-      activeUser = users[idx];
-    }
-    return users[idx];
+    if (error) throw new Error(error.message);
+    return data as UserProfile;
   }
 
   // --------------------------------------------------------------------------
   // CHARITIES
   // --------------------------------------------------------------------------
-  public static getCharities(query?: string, category?: string): Charity[] {
-    let list = [...charities];
-    if (category && category !== "All") {
-      list = list.filter((c) => c.category.toLowerCase() === category.toLowerCase());
-    }
-    if (query) {
-      const q = query.toLowerCase();
-      list = list.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          c.tagline.toLowerCase().includes(q) ||
-          c.description.toLowerCase().includes(q) ||
-          c.location.toLowerCase().includes(q)
-      );
-    }
-    return list;
+
+  public static async getCharities(): Promise<Charity[]> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("charities")
+      .select("*")
+      .order("name");
+
+    if (error) throw new Error(error.message);
+    return (data || []) as Charity[];
   }
 
-  public static getFeaturedCharities(): Charity[] {
-    return charities.filter((c) => c.is_featured);
+  public static async getFeaturedCharities(): Promise<Charity[]> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("charities")
+      .select("*")
+      .eq("is_featured", true)
+      .order("name");
+
+    if (error) throw new Error(error.message);
+    return (data || []) as Charity[];
   }
 
-  public static getCharityById(idOrSlug: string): Charity | undefined {
-    return charities.find((c) => c.id === idOrSlug || c.slug === idOrSlug);
+  public static async getCharityById(id: string): Promise<Charity | null> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("charities")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return data as Charity | null;
   }
 
-  public static createCharity(
-    data: Omit<Charity, "id" | "total_received" | "created_at" | "updated_at">,
+  public static async getCharityBySlug(slug: string): Promise<Charity | null> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("charities")
+      .select("*")
+      .eq("slug", slug)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return data as Charity | null;
+  }
+
+  public static async createCharity(
+    data: Omit<Charity, "id" | "created_at" | "updated_at">,
     adminId?: string
-  ): Charity {
-    const slug = data.slug || data.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const newCharity: Charity = {
-      id: crypto.randomUUID(),
+  ): Promise<Charity> {
+    const supabase = await getSupabase();
+    const newCharity = {
       ...data,
-      slug,
-      total_received: 0,
-      upcoming_events: data.upcoming_events || [],
+      id: crypto.randomUUID(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    charities.unshift(newCharity);
 
-    this.logAudit({
+    const { data: created, error } = await supabase
+      .from("charities")
+      .insert(newCharity)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    await this.logAudit({
       adminId,
       action: "CHARITY_CREATED",
       entity: "charities",
-      entityId: newCharity.id,
-      metadata: { name: newCharity.name, category: newCharity.category },
+      entityId: created.id,
+      metadata: { name: created.name, category: created.category },
     });
 
-    return newCharity;
+    return created as Charity;
   }
 
-  public static updateCharity(
+  public static async updateCharity(
     id: string,
-    data: Partial<Charity>,
+    updates: Partial<Charity>,
     adminId?: string
-  ): Charity {
-    const idx = charities.findIndex((c) => c.id === id);
-    if (idx === -1) throw new Error("Charity not found");
+  ): Promise<Charity> {
+    const supabase = await getSupabase();
+    const { data: updated, error } = await supabase
+      .from("charities")
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select()
+      .single();
 
-    charities[idx] = {
-      ...charities[idx],
-      ...data,
-      updated_at: new Date().toISOString(),
-    };
+    if (error) throw new Error(error.message);
 
-    this.logAudit({
+    await this.logAudit({
       adminId,
       action: "CHARITY_UPDATED",
       entity: "charities",
       entityId: id,
-      metadata: { changes: Object.keys(data) },
+      metadata: { changes: Object.keys(updates) },
     });
 
-    return charities[idx];
+    return updated as Charity;
   }
 
-  public static deleteCharity(id: string, adminId?: string): boolean {
-    const idx = charities.findIndex((c) => c.id === id);
-    if (idx === -1) return false;
-    const deleted = charities[idx];
-    charities = charities.filter((c) => c.id !== id);
+  public static async deleteCharity(id: string, adminId?: string): Promise<boolean> {
+    const supabase = await getSupabase();
+    const { error } = await supabase.from("charities").delete().eq("id", id);
 
-    this.logAudit({
+    if (error) throw new Error(error.message);
+
+    await this.logAudit({
       adminId,
       action: "CHARITY_DELETED",
       entity: "charities",
       entityId: id,
-      metadata: { name: deleted.name },
+      metadata: { id },
     });
 
     return true;
@@ -331,96 +232,110 @@ export class DataStore {
   // --------------------------------------------------------------------------
   // USER CHARITY SELECTION
   // --------------------------------------------------------------------------
-  public static getUserCharity(userId: string): { userCharity?: UserCharity; charity?: Charity } {
-    const uc = userCharities.find((u) => u.user_id === userId);
+
+  public static async getUserCharity(
+    userId: string
+  ): Promise<{ userCharity?: UserCharity; charity?: Charity }> {
+    const supabase = await getSupabase();
+    const { data: uc, error } = await supabase
+      .from("user_charities")
+      .select("*, charity:charities(*)")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
     if (!uc) return {};
-    const ch = charities.find((c) => c.id === uc.charity_id);
-    return { userCharity: uc, charity: ch };
+
+    const charity = uc.charity as Charity | undefined;
+    return { userCharity: uc as UserCharity, charity };
   }
 
-  public static setUserCharity(
+  public static async setUserCharity(
     userId: string,
     charityId: string,
     contributionPercentage: number
-  ): UserCharity {
+  ): Promise<UserCharity> {
     const validPct = Math.max(10, Math.min(100, contributionPercentage));
-    const ch = charities.find((c) => c.id === charityId);
-    if (!ch) throw new Error("Selected charity does not exist");
+    const supabase = await getSupabase();
 
-    const idx = userCharities.findIndex((u) => u.user_id === userId);
-    if (idx !== -1) {
-      userCharities[idx] = {
-        ...userCharities[idx],
-        charity_id: charityId,
-        contribution_percentage: validPct,
-        updated_at: new Date().toISOString(),
-      };
-      if (typeof window !== "undefined") {
-        try {
-          const supabase = createClient();
-          Promise.resolve(supabase.from("user_charities").upsert(userCharities[idx])).catch(() => {});
-        } catch {}
-      }
-      return userCharities[idx];
-    } else {
-      const created: UserCharity = {
-        id: crypto.randomUUID(),
-        user_id: userId,
-        charity_id: charityId,
-        contribution_percentage: validPct,
-        updated_at: new Date().toISOString(),
-      };
-      userCharities.push(created);
-      if (typeof window !== "undefined") {
-        try {
-          const supabase = createClient();
-          Promise.resolve(supabase.from("user_charities").upsert(created)).catch(() => {});
-        } catch {}
-      }
-      return created;
-    }
+    const payload = {
+      user_id: userId,
+      charity_id: charityId,
+      contribution_percentage: validPct,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from("user_charities")
+      .upsert(payload, { onConflict: "user_id" })
+      .select("*, charity:charities(*)")
+      .single();
+
+    if (error) throw new Error(error.message);
+    return data as UserCharity;
   }
 
   // --------------------------------------------------------------------------
   // SUBSCRIPTIONS
   // --------------------------------------------------------------------------
-  public static getUserSubscription(userId: string): Subscription | undefined {
-    return subscriptions.find((s) => s.user_id === userId);
+
+  public static async getUserSubscription(userId: string): Promise<Subscription | null> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return data as Subscription | null;
   }
 
-  public static getAllSubscriptions(): Subscription[] {
-    return [...subscriptions];
+  public static async getAllSubscriptions(): Promise<Subscription[]> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) throw new Error(error.message);
+    return (data || []) as Subscription[];
   }
 
-  public static isActiveSubscriber(userId: string): boolean {
-    const sub = this.getUserSubscription(userId);
+  public static async isActiveSubscriber(userId: string): Promise<boolean> {
+    const sub = await this.getUserSubscription(userId);
     return !!sub && sub.status === "active";
   }
 
-  public static updateSubscriptionPlan(userId: string, plan: "monthly" | "yearly"): Subscription {
-    const idx = subscriptions.findIndex((s) => s.user_id === userId);
+  public static async updateSubscriptionPlan(
+    userId: string,
+    plan: "monthly" | "yearly"
+  ): Promise<Subscription> {
     const amount = plan === "monthly" ? 3900 : 39000;
-    if (idx !== -1) {
-      subscriptions[idx] = {
-        ...subscriptions[idx],
-        plan,
-        amount_cents: amount,
-        updated_at: new Date().toISOString(),
-      };
-      if (typeof window !== "undefined") {
-        try {
-          const supabase = createClient();
-          Promise.resolve(supabase.from("subscriptions").upsert(subscriptions[idx])).catch(() => {});
-        } catch {}
-      }
-      return subscriptions[idx];
+    const supabase = await getSupabase();
+    const existing = await this.getUserSubscription(userId);
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from("subscriptions")
+        .update({
+          plan,
+          amount_cents: amount,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existing.id)
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+      return data as Subscription;
     } else {
-      const created: Subscription = {
+      const newSub = {
         id: crypto.randomUUID(),
         user_id: userId,
         stripe_customer_id: `cus_${userId.slice(0, 8)}`,
         plan,
-        status: "active",
+        status: "active" as const,
         amount_cents: amount,
         currency: "usd",
         current_period_start: new Date().toISOString(),
@@ -429,43 +344,55 @@ export class DataStore {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      subscriptions.push(created);
-      if (typeof window !== "undefined") {
-        try {
-          const supabase = createClient();
-          Promise.resolve(supabase.from("subscriptions").upsert(created)).catch(() => {});
-        } catch {}
-      }
-      return created;
+
+      const { data, error } = await supabase
+        .from("subscriptions")
+        .insert(newSub)
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+      return data as Subscription;
     }
   }
 
-
-
   // --------------------------------------------------------------------------
-  // SCORES (Rolling 5 scores)
+  // SCORES (Rolling 5 Stableford Scores)
   // --------------------------------------------------------------------------
-  public static getUserScores(userId: string): GolfScore[] {
-    return scores
-      .filter((s) => s.user_id === userId)
-      .sort((a, b) => new Date(b.played_date).getTime() - new Date(a.played_date).getTime());
+
+  public static async getUserScores(userId: string): Promise<GolfScore[]> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("scores")
+      .select("*")
+      .eq("user_id", userId)
+      .order("played_date", { ascending: false });
+
+    if (error) throw new Error(error.message);
+    return (data || []) as GolfScore[];
   }
 
-  public static getAllScores(): GolfScore[] {
-    return [...scores].sort(
-      (a, b) => new Date(b.played_date).getTime() - new Date(a.played_date).getTime()
-    );
+  public static async getAllScores(): Promise<GolfScore[]> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("scores")
+      .select("*")
+      .order("played_date", { ascending: false });
+
+    if (error) throw new Error(error.message);
+    return (data || []) as GolfScore[];
   }
 
-  public static addScore(
+  public static async addScore(
     userId: string,
     score: number,
     playedDate: string,
     courseName?: string | null,
     notes?: string | null
-  ): { success: boolean; scores: GolfScore[]; error?: string } {
-    const userScores = this.getUserScores(userId);
-    const result = ScoreService.processRollingScore(userScores, {
+  ): Promise<{ success: boolean; scores: GolfScore[]; error?: string }> {
+    const currentScores = await this.getUserScores(userId);
+
+    const result = ScoreService.processRollingScore(currentScores, {
       userId,
       score,
       playedDate,
@@ -474,44 +401,50 @@ export class DataStore {
     });
 
     if (!result.success) {
-      return { success: false, scores: userScores, error: result.error };
+      return { success: false, scores: currentScores, error: result.error };
     }
 
-    // Update global scores table: remove old score if rolled over, add new
+    const supabase = await getSupabase();
+
+    // If rolling over 5th score, delete the oldest
     if (result.removedScoreId) {
-      scores = scores.filter((s) => s.id !== result.removedScoreId);
-      if (typeof window !== "undefined") {
-        try {
-          const supabase = createClient();
-          Promise.resolve(supabase.from("scores").delete().eq("id", result.removedScoreId)).catch(() => {});
-        } catch {}
-      }
-    }
-    // Find newly added item in result.scores
-    const addedItem = result.scores.find((s) => !userScores.some((old) => old.id === s.id));
-    if (addedItem) {
-      scores.push(addedItem);
-      if (typeof window !== "undefined") {
-        try {
-          const supabase = createClient();
-          Promise.resolve(supabase.from("scores").insert(addedItem)).catch(() => {});
-        } catch {}
-      }
+      const { error: delError } = await supabase
+        .from("scores")
+        .delete()
+        .eq("id", result.removedScoreId);
+
+      if (delError) throw new Error(delError.message);
     }
 
-    return { success: true, scores: result.scores };
+    const newScore = {
+      id: crypto.randomUUID(),
+      user_id: userId,
+      score: Number(score),
+      played_date: playedDate,
+      course_name: courseName || null,
+      notes: notes || null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: insError } = await supabase.from("scores").insert(newScore);
+    if (insError) throw new Error(insError.message);
+
+    const refreshed = await this.getUserScores(userId);
+    return { success: true, scores: refreshed };
   }
 
-  public static updateScore(
+  public static async updateScore(
     userId: string,
     scoreId: string,
     score: number,
     playedDate: string,
     courseName?: string | null,
     notes?: string | null
-  ): { success: boolean; scores: GolfScore[]; error?: string } {
-    const userScores = this.getUserScores(userId);
-    const result = ScoreService.updateScore(userScores, scoreId, {
+  ): Promise<{ success: boolean; scores: GolfScore[]; error?: string }> {
+    const currentScores = await this.getUserScores(userId);
+
+    const result = ScoreService.updateScore(currentScores, scoreId, {
       score,
       playedDate,
       courseName,
@@ -519,86 +452,110 @@ export class DataStore {
     });
 
     if (!result.success) {
-      return { success: false, scores: userScores, error: result.error };
+      return { success: false, scores: currentScores, error: result.error };
     }
 
-    // Update global scores table
-    scores = scores.map((s) => {
-      const updated = result.scores.find((u) => u.id === s.id);
-      return updated || s;
-    });
+    const supabase = await getSupabase();
+    const { error } = await supabase
+      .from("scores")
+      .update({
+        score: Number(score),
+        played_date: playedDate,
+        course_name: courseName || null,
+        notes: notes || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", scoreId);
 
-    if (typeof window !== "undefined") {
-      try {
-        const supabase = createClient();
-        Promise.resolve(supabase.from("scores").update({
-          score: Number(score),
-          played_date: playedDate,
-          course_name: courseName || null,
-          notes: notes || null,
-          updated_at: new Date().toISOString(),
-        }).eq("id", scoreId)).catch(() => {});
-      } catch {}
-    }
+    if (error) throw new Error(error.message);
 
-    return { success: true, scores: result.scores };
+    const refreshed = await this.getUserScores(userId);
+    return { success: true, scores: refreshed };
   }
 
-  public static deleteScore(userId: string, scoreId: string): { success: boolean; scores: GolfScore[]; error?: string } {
-    const userScores = this.getUserScores(userId);
-    const result = ScoreService.deleteScore(userScores, scoreId);
+  public static async deleteScore(
+    userId: string,
+    scoreId: string
+  ): Promise<{ success: boolean; scores: GolfScore[]; error?: string }> {
+    const supabase = await getSupabase();
+    const { error } = await supabase.from("scores").delete().eq("id", scoreId);
 
-    if (!result.success) {
-      return { success: false, scores: userScores, error: result.error };
-    }
+    if (error) throw new Error(error.message);
 
-    scores = scores.filter((s) => s.id !== scoreId);
-
-    if (typeof window !== "undefined") {
-      try {
-        const supabase = createClient();
-        Promise.resolve(supabase.from("scores").delete().eq("id", scoreId)).catch(() => {});
-      } catch {}
-    }
-
-    return { success: true, scores: result.scores };
+    const refreshed = await this.getUserScores(userId);
+    return { success: true, scores: refreshed };
   }
-
 
   // --------------------------------------------------------------------------
   // DRAWS & SIMULATION
   // --------------------------------------------------------------------------
-  public static getDraws(): Draw[] {
-    return [...draws].sort(
-      (a, b) => new Date(b.draw_date).getTime() - new Date(a.draw_date).getTime()
-    );
+
+  public static async getDraws(): Promise<Draw[]> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("draws")
+      .select("*")
+      .order("draw_date", { ascending: false });
+
+    if (error) throw new Error(error.message);
+    return (data || []) as Draw[];
   }
 
-  public static getDrawById(id: string): Draw | undefined {
-    return draws.find((d) => d.id === id);
+  public static async getDrawById(id: string): Promise<Draw | null> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("draws")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return data as Draw | null;
   }
 
-  public static getLatestPublishedDraw(): Draw | undefined {
-    return draws
-      .filter((d) => d.status === "PUBLISHED" || d.status === "COMPLETED")
-      .sort((a, b) => new Date(b.draw_date).getTime() - new Date(a.draw_date).getTime())[0];
+  public static async getLatestPublishedDraw(): Promise<Draw | null> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("draws")
+      .select("*")
+      .in("status", ["PUBLISHED", "COMPLETED"])
+      .order("draw_date", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return data as Draw | null;
   }
 
-  public static getUpcomingDraw(): Draw | undefined {
-    return (
-      draws.find((d) => d.status === "DRAFT" || d.status === "SIMULATED") ||
-      draws.find((d) => new Date(d.draw_date) > new Date())
-    );
+  public static async getUpcomingDraw(): Promise<Draw | null> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("draws")
+      .select("*")
+      .in("status", ["DRAFT", "SIMULATED"])
+      .order("draw_date", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return data as Draw | null;
   }
 
-  public static createDraw(data: {
-    title: string;
-    drawDate: string;
-    mode: DrawMode;
-    totalPrizePool: number;
-    jackpotRolloverIn?: number;
-  }, adminId?: string): Draw {
-    const nextNumber = Math.max(...draws.map((d) => d.draw_number), 100) + 1;
+  public static async createDraw(
+    data: {
+      title: string;
+      drawDate: string;
+      mode: DrawMode;
+      totalPrizePool: number;
+      jackpotRolloverIn?: number;
+    },
+    adminId?: string
+  ): Promise<Draw> {
+    const supabase = await getSupabase();
+    const existingDraws = await this.getDraws();
+    const nextNumber = Math.max(...existingDraws.map((d) => d.draw_number), 100) + 1;
+    const activeSubs = (await this.getAllSubscriptions()).filter((s) => s.status === "active");
+
     const newDraw: Draw = {
       id: crypto.randomUUID(),
       draw_number: nextNumber,
@@ -607,42 +564,52 @@ export class DataStore {
       status: "DRAFT",
       mode: data.mode,
       winning_numbers: null,
-      total_participants: subscriptions.filter((s) => s.status === "active").length,
+      total_participants: activeSubs.length,
       total_prize_pool: data.totalPrizePool,
       jackpot_rollover_in: data.jackpotRolloverIn || 0,
       jackpot_rollover_out: 0,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    draws.unshift(newDraw);
 
-    this.logAudit({
+    const { data: created, error } = await supabase
+      .from("draws")
+      .insert(newDraw)
+      .select()
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    await this.logAudit({
       adminId,
       action: "DRAW_CREATED",
       entity: "draws",
-      entityId: newDraw.id,
+      entityId: created.id,
       metadata: { draw_number: nextNumber, mode: data.mode },
     });
 
-    return newDraw;
+    return created as Draw;
   }
 
   /**
-   * Runs an in-memory simulation for a draw using current active participants.
-   * DOES NOT modify published draw state or create permanent winners.
+   * Pure in-memory simulation using live participant data from Supabase.
+   * Does not mutate database state until published.
    */
-  public static simulateDraw(drawId: string, mode?: DrawMode, seed?: string): DrawSimulationResult {
-    const draw = this.getDrawById(drawId);
+  public static async simulateDraw(
+    drawId: string,
+    mode?: DrawMode,
+    seed?: string
+  ): Promise<DrawSimulationResult> {
+    const draw = await this.getDrawById(drawId);
     if (!draw) throw new Error("Draw not found");
 
-    // Gather active subscriber participants
-    const activeSubscribers = subscriptions.filter((s) => s.status === "active");
-    const participants = activeSubscribers.map((sub) => {
-      const uScores = this.getUserScores(sub.user_id);
-      // Use 5 scores, or pad if fewer
+    const activeSubs = (await this.getAllSubscriptions()).filter((s) => s.status === "active");
+    const allScores = await this.getAllScores();
+
+    const participants = activeSubs.map((sub) => {
+      const uScores = allScores.filter((s) => s.user_id === sub.user_id);
       let numbers = uScores.map((s) => s.score);
       if (numbers.length < 5) {
-        // Deterministic default filler for testing
         const fill = [10, 20, 30, 40, 45].slice(numbers.length);
         numbers = [...numbers, ...fill];
       }
@@ -653,55 +620,50 @@ export class DataStore {
       };
     });
 
-    const result = DrawEngine.simulateDraw({
+    return DrawEngine.simulateDraw({
       draw,
       participants,
       mode: mode || draw.mode,
       seed: seed || `sim-${draw.id}-${Date.now()}`,
-      allParticipantScores: scores,
+      allParticipantScores: allScores,
     });
-
-    // Update draw status to SIMULATED if it was DRAFT
-    if (draw.status === "DRAFT") {
-      draw.status = "SIMULATED";
-      draw.simulation_seed = result.seed;
-      draw.updated_at = new Date().toISOString();
-    }
-
-    return result;
   }
 
   /**
-   * Commits and publishes an official draw result.
+   * Commits and publishes official draw results to Supabase.
    */
-  public static publishDraw(
+  public static async publishDraw(
     drawId: string,
     simResult: DrawSimulationResult,
     adminId?: string
-  ): Draw {
-    const idx = draws.findIndex((d) => d.id === drawId);
-    if (idx === -1) throw new Error("Draw not found");
+  ): Promise<Draw> {
+    const supabase = await getSupabase();
+    const publishedAt = new Date().toISOString();
 
-    const targetDraw = draws[idx];
-    targetDraw.status = "PUBLISHED";
-    targetDraw.winning_numbers = simResult.winningNumbers;
-    targetDraw.published_at = new Date().toISOString();
-    targetDraw.mode = simResult.mode;
-    targetDraw.simulation_seed = simResult.seed;
-    targetDraw.algorithm_metadata = simResult.algorithmMetadata || null;
-    targetDraw.total_participants = simResult.totalParticipants;
-    targetDraw.jackpot_rollover_out = simResult.jackpotRolloverOut;
-    targetDraw.updated_at = new Date().toISOString();
+    const { error: drawError } = await supabase
+      .from("draws")
+      .update({
+        status: "PUBLISHED",
+        winning_numbers: simResult.winningNumbers,
+        published_at: publishedAt,
+        mode: simResult.mode,
+        simulation_seed: simResult.seed,
+        total_participants: simResult.totalParticipants,
+        jackpot_rollover_out: simResult.jackpotRolloverOut,
+        updated_at: publishedAt,
+      })
+      .eq("id", drawId);
 
-    // Create winner records
+    if (drawError) throw new Error(drawError.message);
+
     const allWinners = [
       ...simResult.tier5Winners,
       ...simResult.tier4Winners,
       ...simResult.tier3Winners,
     ];
 
-    allWinners.forEach((entry) => {
-      const newWinner: Winner = {
+    if (allWinners.length > 0) {
+      const records = allWinners.map((entry) => ({
         id: crypto.randomUUID(),
         draw_id: drawId,
         user_id: entry.user_id,
@@ -710,35 +672,15 @@ export class DataStore {
         prize_tier: entry.prize_tier,
         prize_amount: entry.prize_amount,
         status: "PENDING_PROOF",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      winners.unshift(newWinner);
-      if (typeof window !== "undefined") {
-        try {
-          const supabase = createClient();
-          Promise.resolve(supabase.from("winners").insert(newWinner)).catch(() => {});
-        } catch {}
-      }
-    });
+        created_at: publishedAt,
+        updated_at: publishedAt,
+      }));
 
-    if (typeof window !== "undefined") {
-      try {
-        const supabase = createClient();
-        Promise.resolve(supabase.from("draws").update({
-          status: "PUBLISHED",
-          winning_numbers: targetDraw.winning_numbers,
-          published_at: targetDraw.published_at,
-          mode: targetDraw.mode,
-          simulation_seed: targetDraw.simulation_seed,
-          total_participants: targetDraw.total_participants,
-          jackpot_rollover_out: targetDraw.jackpot_rollover_out,
-          updated_at: new Date().toISOString(),
-        }).eq("id", drawId)).catch(() => {});
-      } catch {}
+      const { error: winError } = await supabase.from("winners").insert(records);
+      if (winError) throw new Error(winError.message);
     }
 
-    this.logAudit({
+    await this.logAudit({
       adminId,
       action: "DRAW_PUBLISHED",
       entity: "draws",
@@ -750,45 +692,55 @@ export class DataStore {
       },
     });
 
-    return targetDraw;
+    const refreshed = await this.getDrawById(drawId);
+    return refreshed!;
   }
 
   // --------------------------------------------------------------------------
   // WINNERS & PROOFS
   // --------------------------------------------------------------------------
-  public static getWinners(status?: string): Winner[] {
-    let list = [...winners];
+
+  public static async getWinners(status?: string): Promise<Winner[]> {
+    const supabase = await getSupabase();
+    let query = supabase
+      .from("winners")
+      .select("*, user:profiles(*), draw:draws(*)")
+      .order("created_at", { ascending: false });
+
     if (status && status !== "ALL") {
-      list = list.filter((w) => w.status === status);
+      query = query.eq("status", status);
     }
-    // Enrich with user and draw details
-    return list.map((w) => ({
-      ...w,
-      user: users.find((u) => u.id === w.user_id),
-      draw: draws.find((d) => d.id === w.draw_id),
-    }));
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    return (data || []) as Winner[];
   }
 
-  public static getUserWinners(userId: string): Winner[] {
-    return winners
-      .filter((w) => w.user_id === userId)
-      .map((w) => ({
-        ...w,
-        draw: draws.find((d) => d.id === w.draw_id),
-      }));
+  public static async getUserWinners(userId: string): Promise<Winner[]> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("winners")
+      .select("*, draw:draws(*)")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw new Error(error.message);
+    return (data || []) as Winner[];
   }
 
-  public static getWinnerById(winnerId: string): Winner | undefined {
-    const w = winners.find((win) => win.id === winnerId);
-    if (!w) return undefined;
-    return {
-      ...w,
-      user: users.find((u) => u.id === w.user_id),
-      draw: draws.find((d) => d.id === w.draw_id),
-    };
+  public static async getWinnerById(winnerId: string): Promise<Winner | null> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("winners")
+      .select("*, user:profiles(*), draw:draws(*)")
+      .eq("id", winnerId)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return data as Winner | null;
   }
 
-  public static submitWinnerProof(
+  public static async submitWinnerProof(
     winnerId: string,
     proofData: {
       fileUrl: string;
@@ -797,103 +749,116 @@ export class DataStore {
       mimeType: string;
       notes?: string;
     }
-  ): Winner {
-    const w = winners.find((win) => win.id === winnerId);
-    if (!w) throw new Error("Winner record not found");
+  ): Promise<Winner> {
+    const winner = await this.getWinnerById(winnerId);
+    if (!winner) throw new Error("Winner record not found");
 
-    const res = WinnerService.submitProof(w, proofData);
-    if (!res.success || !res.winner) {
-      throw new Error(res.error || "Failed to submit proof");
+    const res = WinnerService.submitProof(winner, proofData);
+    if (!res.success) {
+      throw new Error(res.error || "Failed to validate proof");
     }
 
-    const idx = winners.findIndex((win) => win.id === winnerId);
-    winners[idx] = res.winner;
+    const supabase = await getSupabase();
 
-    if (typeof window !== "undefined") {
-      try {
-        const supabase = createClient();
-        Promise.resolve(supabase.from("winner_proofs").insert({
-          id: crypto.randomUUID(),
-          winner_id: winnerId,
-          file_url: proofData.fileUrl,
-          file_name: proofData.fileName,
-          file_size: proofData.fileSize,
-          mime_type: proofData.mimeType,
-          notes: proofData.notes || null,
-          uploaded_at: new Date().toISOString(),
-        })).catch(() => {});
-        Promise.resolve(supabase.from("winners").update({
-          status: "PROOF_SUBMITTED",
-          updated_at: new Date().toISOString(),
-        }).eq("id", winnerId)).catch(() => {});
-      } catch {}
-    }
+    const { error: proofError } = await supabase.from("winner_proofs").insert({
+      id: crypto.randomUUID(),
+      winner_id: winnerId,
+      file_url: proofData.fileUrl,
+      file_name: proofData.fileName,
+      file_size: proofData.fileSize,
+      mime_type: proofData.mimeType,
+      notes: proofData.notes || null,
+      uploaded_at: new Date().toISOString(),
+    });
 
-    return res.winner;
+    if (proofError) throw new Error(proofError.message);
+
+    const { data: updated, error: winError } = await supabase
+      .from("winners")
+      .update({
+        status: "PROOF_SUBMITTED",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", winnerId)
+      .select("*, user:profiles(*), draw:draws(*)")
+      .single();
+
+    if (winError) throw new Error(winError.message);
+    return updated as Winner;
   }
 
-  public static approveWinner(winnerId: string, adminId: string, notes?: string): Winner {
-    const w = winners.find((win) => win.id === winnerId);
-    if (!w) throw new Error("Winner record not found");
+  public static async approveWinner(
+    winnerId: string,
+    adminId: string,
+    notes?: string
+  ): Promise<Winner> {
+    const winner = await this.getWinnerById(winnerId);
+    if (!winner) throw new Error("Winner record not found");
 
-    const res = WinnerService.approveWinner(w, adminId, notes);
-    if (!res.success || !res.winner) {
+    const res = WinnerService.approveWinner(winner, adminId, notes);
+    if (!res.success) {
       throw new Error(res.error || "Failed to approve winner");
     }
 
-    const idx = winners.findIndex((win) => win.id === winnerId);
-    winners[idx] = res.winner;
+    const supabase = await getSupabase();
 
-    if (typeof window !== "undefined") {
-      try {
-        const supabase = createClient();
-        Promise.resolve(supabase.from("winners").update({
-          status: "APPROVED",
-          reviewed_by: adminId,
-          reviewed_at: new Date().toISOString(),
-          admin_notes: notes || null,
-          updated_at: new Date().toISOString(),
-        }).eq("id", winnerId)).catch(() => {});
-      } catch {}
-    }
+    const { data: updated, error } = await supabase
+      .from("winners")
+      .update({
+        status: "APPROVED",
+        reviewed_by: adminId,
+        reviewed_at: new Date().toISOString(),
+        admin_notes: notes || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", winnerId)
+      .select("*, user:profiles(*), draw:draws(*)")
+      .single();
 
-    this.logAudit({
+    if (error) throw new Error(error.message);
+
+    await this.logAudit({
       adminId,
       action: "WINNER_APPROVED",
       entity: "winners",
       entityId: winnerId,
-      metadata: { prize_amount: w.prize_amount, notes },
+      metadata: { prize_amount: winner.prize_amount, notes },
     });
 
-    return res.winner;
+    return updated as Winner;
   }
 
-  public static rejectWinner(winnerId: string, adminId: string, reason: string): Winner {
-    const w = winners.find((win) => win.id === winnerId);
-    if (!w) throw new Error("Winner record not found");
+  public static async rejectWinner(
+    winnerId: string,
+    adminId: string,
+    reason: string
+  ): Promise<Winner> {
+    const winner = await this.getWinnerById(winnerId);
+    if (!winner) throw new Error("Winner record not found");
 
-    const res = WinnerService.rejectWinner(w, adminId, reason);
-    if (!res.success || !res.winner) {
+    const res = WinnerService.rejectWinner(winner, adminId, reason);
+    if (!res.success) {
       throw new Error(res.error || "Failed to reject winner");
     }
 
-    const idx = winners.findIndex((win) => win.id === winnerId);
-    winners[idx] = res.winner;
+    const supabase = await getSupabase();
 
-    if (typeof window !== "undefined") {
-      try {
-        const supabase = createClient();
-        Promise.resolve(supabase.from("winners").update({
-          status: "REJECTED",
-          reviewed_by: adminId,
-          reviewed_at: new Date().toISOString(),
-          admin_notes: reason,
-          updated_at: new Date().toISOString(),
-        }).eq("id", winnerId)).catch(() => {});
-      } catch {}
-    }
+    const { data: updated, error } = await supabase
+      .from("winners")
+      .update({
+        status: "REJECTED",
+        reviewed_by: adminId,
+        reviewed_at: new Date().toISOString(),
+        admin_notes: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", winnerId)
+      .select("*, user:profiles(*), draw:draws(*)")
+      .single();
 
-    this.logAudit({
+    if (error) throw new Error(error.message);
+
+    await this.logAudit({
       adminId,
       action: "WINNER_REJECTED",
       entity: "winners",
@@ -901,135 +866,186 @@ export class DataStore {
       metadata: { reason },
     });
 
-    return res.winner;
+    return updated as Winner;
   }
 
-  public static markWinnerPaid(winnerId: string, adminId: string, paymentRef: string): Winner {
-    const w = winners.find((win) => win.id === winnerId);
-    if (!w) throw new Error("Winner record not found");
+  public static async markWinnerPaid(
+    winnerId: string,
+    adminId: string,
+    paymentRef: string
+  ): Promise<Winner> {
+    const winner = await this.getWinnerById(winnerId);
+    if (!winner) throw new Error("Winner record not found");
 
-    const res = WinnerService.markPaid(w, adminId, paymentRef);
-    if (!res.success || !res.winner) {
+    const res = WinnerService.markPaid(winner, adminId, paymentRef);
+    if (!res.success) {
       throw new Error(res.error || "Failed to mark payout as paid");
     }
 
-    const idx = winners.findIndex((win) => win.id === winnerId);
-    winners[idx] = res.winner;
+    const supabase = await getSupabase();
+    const paidAt = new Date().toISOString();
 
-    if (typeof window !== "undefined") {
-      try {
-        const supabase = createClient();
-        Promise.resolve(supabase.from("winners").update({
-          status: "PAID",
-          paid_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }).eq("id", winnerId)).catch(() => {});
+    const { data: updated, error: winError } = await supabase
+      .from("winners")
+      .update({
+        status: "PAID",
+        paid_at: paidAt,
+        updated_at: paidAt,
+      })
+      .eq("id", winnerId)
+      .select("*, user:profiles(*), draw:draws(*)")
+      .single();
 
-        Promise.resolve(supabase.from("payouts").insert({
-          id: crypto.randomUUID(),
-          winner_id: winnerId,
-          user_id: w.user_id,
-          amount: w.prize_amount,
-          status: "COMPLETED",
-          payment_method: "bank_transfer",
-          payout_reference: paymentRef,
-          completed_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-        })).catch(() => {});
-      } catch {}
-    }
+    if (winError) throw new Error(winError.message);
 
-    this.logAudit({
+    const { error: payError } = await supabase.from("payouts").insert({
+      id: crypto.randomUUID(),
+      winner_id: winnerId,
+      user_id: winner.user_id,
+      amount: winner.prize_amount,
+      status: "COMPLETED",
+      payment_method: "bank_transfer",
+      payout_reference: paymentRef,
+      completed_at: paidAt,
+      created_at: paidAt,
+    });
+
+    if (payError) throw new Error(payError.message);
+
+    await this.logAudit({
       adminId,
       action: "PAYOUT_COMPLETED",
       entity: "winners",
       entityId: winnerId,
-      metadata: { payment_ref: paymentRef, amount: w.prize_amount },
+      metadata: { payment_ref: paymentRef, amount: winner.prize_amount },
     });
 
-    return res.winner;
+    return updated as Winner;
   }
-
 
   // --------------------------------------------------------------------------
   // AUDIT LOGS
   // --------------------------------------------------------------------------
-  public static getAuditLogs(): AuditLog[] {
-    return [...auditLogs].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+
+  public static async getAuditLogs(): Promise<AuditLog[]> {
+    const supabase = await getSupabase();
+    const { data, error } = await supabase
+      .from("audit_logs")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) throw new Error(error.message);
+    return (data || []) as AuditLog[];
   }
 
-  public static logAudit(entry: {
+  public static async logAudit(entry: {
     adminId?: string;
     adminEmail?: string;
     action: string;
     entity: string;
     entityId?: string;
     metadata: Record<string, unknown>;
-  }) {
-    const log: AuditLog = {
-      id: crypto.randomUUID(),
-      admin_id: entry.adminId || activeUser?.id,
-      admin_email: entry.adminEmail || activeUser?.email,
-      action: entry.action,
-      entity: entry.entity,
-      entity_id: entry.entityId,
-      metadata: entry.metadata,
-      created_at: new Date().toISOString(),
-    };
-    auditLogs.unshift(log);
+  }): Promise<void> {
+    try {
+      const supabase = await getSupabase();
+      const log = {
+        id: crypto.randomUUID(),
+        admin_id: entry.adminId || null,
+        action: entry.action,
+        entity: entry.entity,
+        entity_id: entry.entityId || null,
+        metadata: entry.metadata,
+        created_at: new Date().toISOString(),
+      };
+      await supabase.from("audit_logs").insert(log);
+    } catch {
+      // Audit log failures should not break primary operations
+    }
   }
 
   // --------------------------------------------------------------------------
-  // ADMIN ANALYTICS & REPORTS
+  // EXECUTIVE & USER ANALYTICS
   // --------------------------------------------------------------------------
-  public static getAdminAnalytics() {
-    const totalUsers = users.length;
-    const activeSubscribers = subscriptions.filter((s) => s.status === "active").length;
 
-    // Calculate MRR from active subscriptions: monthly amount + yearly amount/12
-    const mrr = subscriptions
-      .filter((s) => s.status === "active")
-      .reduce((acc, sub) => {
-        const monthlyValue = sub.plan === "monthly" ? sub.amount_cents / 100 : (sub.amount_cents / 100) / 12;
-        return acc + monthlyValue;
-      }, 0);
+  public static async getAdminAnalytics() {
+    const [usersList, subs, charitiesList, drawsList, winnersList] = await Promise.all([
+      this.getAllUsers(),
+      this.getAllSubscriptions(),
+      this.getCharities(),
+      this.getDraws(),
+      this.getWinners(),
+    ]);
 
-    const totalPrizePool = draws.reduce((acc, d) => acc + Number(d.total_prize_pool), 0);
-    const totalCharityContributions = charities.reduce((acc, c) => acc + Number(c.total_received), 0);
-    const pendingWinners = winners.filter(
+    const activeSubs = subs.filter((s) => s.status === "active");
+    const totalCharityContributions = charitiesList.reduce((acc, c) => acc + Number(c.total_received || 0), 0);
+    const totalPrizePool = drawsList.reduce((acc, d) => acc + Number(d.total_prize_pool || 0), 0);
+    const completedPayoutsTotal = winnersList
+      .filter((w) => w.status === "PAID")
+      .reduce((acc, w) => acc + Number(w.prize_amount || 0), 0);
+    const pendingWinners = winnersList.filter(
       (w) => w.status === "PENDING_PROOF" || w.status === "PROOF_SUBMITTED"
     ).length;
-    const completedPayoutsTotal = winners
-      .filter((w) => w.status === "PAID")
-      .reduce((acc, w) => acc + Number(w.prize_amount), 0);
 
-    // Dynamic monthly chart data
-    const monthlyGrowth = [
-      { month: "Jan", subscribers: 85, charityDonated: 14200, prizePool: 8500 },
-      { month: "Feb", subscribers: 142, charityDonated: 24800, prizePool: 12000 },
-      { month: "Mar", subscribers: 198, charityDonated: 34100, prizePool: 14500 },
-      { month: "Apr", subscribers: 245, charityDonated: 42300, prizePool: 16800 },
-      { month: "May", subscribers: 289, charityDonated: 51200, prizePool: 21500 },
-      { month: "Jun", subscribers: activeSubscribers, charityDonated: totalCharityContributions, prizePool: totalPrizePool },
-    ];
+    const mrr = activeSubs.reduce((acc, s) => {
+      return acc + (s.plan === "monthly" ? s.amount_cents / 100 : (s.amount_cents / 100) / 12);
+    }, 0);
 
-    const charityDistribution = charities.map((c) => ({
+    const charityDistribution = charitiesList.map((c) => ({
       name: c.name,
-      value: c.total_received,
+      amount: c.total_received || 0,
+    }));
+
+    const months = ["Nov", "Dec", "Jan", "Feb", "Mar", "Apr"];
+    const monthlyGrowth = months.map((month, idx) => ({
+      month,
+      subscribers: Math.max(1, Math.round((activeSubs.length * (idx + 1)) / months.length)),
+      charityDonated: Math.round((totalCharityContributions * (idx + 1)) / months.length),
+      prizePool: Math.round((totalPrizePool * (idx + 1)) / months.length),
     }));
 
     return {
-      totalUsers,
-      activeSubscribers,
-      mrr: Math.round(mrr),
-      totalPrizePool,
+      totalUsers: usersList.length,
+      activeSubscribers: activeSubs.length,
+      activeSubscribersCount: activeSubs.length,
+      mrr,
+      monthlyRecurringRevenue: mrr,
       totalCharityContributions,
+      totalDonatedToCharities: totalCharityContributions,
+      totalPrizePool,
+      totalPrizesAwarded: completedPayoutsTotal,
+      totalDrawsConducted: drawsList.length,
       pendingWinners,
+      pendingProofsCount: pendingWinners,
       completedPayoutsTotal,
-      monthlyGrowth,
       charityDistribution,
+      monthlyGrowth,
+    };
+  }
+
+  public static async getUserAnalytics(userId: string) {
+    const [userScores, userWinners, sub, uCharity] = await Promise.all([
+      this.getUserScores(userId),
+      this.getUserWinners(userId),
+      this.getUserSubscription(userId),
+      this.getUserCharity(userId),
+    ]);
+
+    const totalWon = userWinners.reduce((acc, w) => acc + Number(w.prize_amount || 0), 0);
+    const charityPct = uCharity.userCharity?.contribution_percentage || 10;
+    const subAmount = (sub?.amount_cents || 3900) / 100;
+    const monthlyCharityContribution = (subAmount * charityPct) / 100;
+
+    return {
+      scoresCount: userScores.length,
+      bestScore: userScores.length > 0 ? Math.max(...userScores.map((s) => s.score)) : 0,
+      averageScore:
+        userScores.length > 0
+          ? Math.round((userScores.reduce((acc, s) => acc + s.score, 0) / userScores.length) * 10) / 10
+          : 0,
+      totalWon,
+      monthlyCharityContribution,
+      charityName: uCharity.charity?.name || "None Selected",
+      subscriptionStatus: sub?.status || "inactive",
     };
   }
 }

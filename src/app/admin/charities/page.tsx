@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DataStore } from "@/lib/data/store";
-import { Charity, UpcomingEvent } from "@/types";
+import { Charity, UpcomingEvent, UserProfile } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 import {
   Heart,
@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 
 export default function AdminCharitiesPage() {
-  const [currentUser] = React.useState(DataStore.getCurrentUser());
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [charities, setCharities] = React.useState<Charity[]>([]);
   const [feedback, setFeedback] = React.useState<string | null>(null);
 
@@ -42,8 +42,15 @@ export default function AdminCharitiesPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = React.useState(false);
   const [charityToDelete, setCharityToDelete] = React.useState<Charity | null>(null);
 
-  const loadCharities = React.useCallback(() => {
-    setCharities(DataStore.getCharities());
+  const loadCharities = React.useCallback(async () => {
+    try {
+      const user = await DataStore.getCurrentUser();
+      if (user) setCurrentUser(user);
+      const list = await DataStore.getCharities();
+      setCharities(list);
+    } catch (err) {
+      console.error("Failed to load charities", err);
+    }
   }, []);
 
   React.useEffect(() => {
@@ -76,56 +83,65 @@ export default function AdminCharitiesPage() {
     setIsModalOpen(true);
   };
 
-  const handleSaveCharity = (e: React.FormEvent) => {
+  const handleSaveCharity = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingCharity) {
-      DataStore.updateCharity(
-        editingCharity.id,
-        {
-          name,
-          category,
-          location,
-          website_url: websiteUrl,
-          tagline,
-          description,
-          banner_url: bannerUrl,
-          is_featured: isFeatured,
-        },
-        currentUser.id
-      );
-      setFeedback("Charity details updated successfully.");
-    } else {
-      DataStore.createCharity(
-        {
-          name,
-          slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-          category,
-          location,
-          website_url: websiteUrl,
-          tagline,
-          description,
-          banner_url: bannerUrl,
-          is_featured: isFeatured,
-          upcoming_events: [],
-        },
-        currentUser.id
-      );
-      setFeedback("New charity partner created and published to directory.");
-    }
+    try {
+      if (editingCharity) {
+        await DataStore.updateCharity(
+          editingCharity.id,
+          {
+            name,
+            category,
+            location,
+            website_url: websiteUrl,
+            tagline,
+            description,
+            banner_url: bannerUrl,
+            is_featured: isFeatured,
+          },
+          currentUser?.id
+        );
+        setFeedback("Charity details updated successfully.");
+      } else {
+        await DataStore.createCharity(
+          {
+            name,
+            slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+            category,
+            location,
+            website_url: websiteUrl,
+            tagline,
+            description,
+            banner_url: bannerUrl,
+            is_featured: isFeatured,
+            upcoming_events: [],
+            total_received: 0,
+          },
+          currentUser?.id
+        );
+        setFeedback("New charity partner created and published to directory.");
+      }
 
-    setIsModalOpen(false);
-    loadCharities();
-    setTimeout(() => setFeedback(null), 3500);
+      setIsModalOpen(false);
+      await loadCharities();
+      setTimeout(() => setFeedback(null), 3500);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Operation failed");
+    }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!charityToDelete) return;
-    DataStore.deleteCharity(charityToDelete.id, currentUser.id);
-    setFeedback(`Charity partner "${charityToDelete.name}" removed from platform.`);
-    setDeleteConfirmOpen(false);
-    setCharityToDelete(null);
-    loadCharities();
-    setTimeout(() => setFeedback(null), 3500);
+    try {
+      await DataStore.deleteCharity(charityToDelete.id, currentUser?.id);
+      setFeedback(`Charity partner "${charityToDelete.name}" removed from platform.`);
+      setDeleteConfirmOpen(false);
+      setCharityToDelete(null);
+      await loadCharities();
+      setTimeout(() => setFeedback(null), 3500);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Delete failed");
+    }
   };
 
   return (

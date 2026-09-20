@@ -24,7 +24,15 @@ export default function PublicDrawsPage() {
   const [draws, setDraws] = React.useState<Draw[]>([]);
 
   React.useEffect(() => {
-    setDraws(DataStore.getDraws());
+    async function loadDraws() {
+      try {
+        const list = await DataStore.getDraws();
+        setDraws(list);
+      } catch (err) {
+        console.error("Failed to load draws:", err);
+      }
+    }
+    loadDraws();
   }, []);
 
   const publishedDraws = draws.filter((d) => d.status === "PUBLISHED" || d.status === "COMPLETED");

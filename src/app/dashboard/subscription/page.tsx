@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DataStore } from "@/lib/data/store";
-import { Subscription } from "@/types";
+import { Subscription, UserProfile } from "@/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   CreditCard,
@@ -18,31 +18,40 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
 export default function DashboardSubscriptionPage() {
-  const [currentUser, setCurrentUser] = React.useState(DataStore.getCurrentUser());
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
   const [subscription, setSubscription] = React.useState<Subscription | null>(null);
   const [feedback, setFeedback] = React.useState<string | null>(null);
   const [isLoading, setIsLoading] = React.useState(false);
 
-  const loadSub = React.useCallback(() => {
-    const user = DataStore.getCurrentUser();
-    setCurrentUser(user);
-    const sub = DataStore.getUserSubscription(user.id);
-    if (sub) setSubscription(sub);
+  const loadSub = React.useCallback(async () => {
+    try {
+      const user = await DataStore.getCurrentUser();
+      if (!user) return;
+      setCurrentUser(user);
+      const sub = await DataStore.getUserSubscription(user.id);
+      if (sub) setSubscription(sub);
+    } catch (err) {
+      console.error("Failed to load subscription", err);
+    }
   }, []);
 
   React.useEffect(() => {
     loadSub();
   }, [loadSub]);
 
-  const handlePlanSwitch = (newPlan: "monthly" | "yearly") => {
+  const handlePlanSwitch = async (newPlan: "monthly" | "yearly") => {
+    if (!currentUser) return;
     setIsLoading(true);
-    setTimeout(() => {
-      DataStore.updateSubscriptionPlan(currentUser.id, newPlan);
+    try {
+      await DataStore.updateSubscriptionPlan(currentUser.id, newPlan);
       setIsLoading(false);
       setFeedback(`Plan upgraded to ${newPlan === "yearly" ? "Annual Champion" : "Monthly Membership"}!`);
-      loadSub();
+      await loadSub();
       setTimeout(() => setFeedback(null), 3000);
-    }, 600);
+    } catch (err) {
+      setIsLoading(false);
+      console.error("Failed to switch plan", err);
+    }
   };
 
   const isYearly = subscription?.plan === "yearly";

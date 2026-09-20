@@ -9,26 +9,39 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 
 export default function DashboardSettingsPage() {
-  const [currentUser, setCurrentUser] = React.useState<UserProfile>(DataStore.getCurrentUser());
-  const [fullName, setFullName] = React.useState(currentUser.full_name);
-  const [handicap, setHandicap] = React.useState(currentUser.handicap || 18.0);
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
+  const [fullName, setFullName] = React.useState("");
+  const [handicap, setHandicap] = React.useState(18.0);
   const [feedback, setFeedback] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    const user = DataStore.getCurrentUser();
-    setCurrentUser(user);
-    setFullName(user.full_name);
-    setHandicap(user.handicap || 18.0);
+    async function loadUser() {
+      try {
+        const user = await DataStore.getCurrentUser();
+        if (!user) return;
+        setCurrentUser(user);
+        setFullName(user.full_name);
+        setHandicap(user.handicap || 18.0);
+      } catch (err) {
+        console.error("Failed to load settings", err);
+      }
+    }
+    loadUser();
   }, []);
 
-  const handleProfileSave = (e: React.FormEvent) => {
+  const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    DataStore.updateUser(currentUser.id, {
-      full_name: fullName,
-      handicap: Number(handicap),
-    });
-    setFeedback("Profile updated successfully!");
-    setTimeout(() => setFeedback(null), 3000);
+    if (!currentUser) return;
+    try {
+      await DataStore.updateUser(currentUser.id, {
+        full_name: fullName,
+        handicap: Number(handicap),
+      });
+      setFeedback("Profile updated successfully!");
+      setTimeout(() => setFeedback(null), 3000);
+    } catch (err) {
+      console.error("Failed to update profile", err);
+    }
   };
 
   return (
@@ -77,7 +90,7 @@ export default function DashboardSettingsPage() {
             <Input
               type="email"
               disabled
-              value={currentUser.email}
+              value={currentUser?.email || ""}
               className="opacity-70 cursor-not-allowed"
             />
             <span className="text-[11px] text-slate-500 mt-1 block">

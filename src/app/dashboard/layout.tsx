@@ -27,11 +27,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [subscription, setSubscription] = React.useState<Subscription | null>(null);
 
   React.useEffect(() => {
-    const user = DataStore.getCurrentUser();
-    setCurrentUser(user);
-    const sub = DataStore.getUserSubscription(user.id);
-    if (sub) setSubscription(sub);
-  }, [pathname]);
+    async function loadUserAndSub() {
+      try {
+        const user = await DataStore.getCurrentUser();
+        if (!user) {
+          router.push("/login");
+          return;
+        }
+        setCurrentUser(user);
+        const sub = await DataStore.getUserSubscription(user.id);
+        if (sub) setSubscription(sub);
+      } catch (err) {
+        console.error("Dashboard layout error:", err);
+      }
+    }
+    loadUserAndSub();
+  }, [pathname, router]);
 
   const navItems = [
     { name: "Overview", href: "/dashboard/overview", icon: LayoutDashboard },
