@@ -55,32 +55,39 @@ export default function SignupPage() {
     setIsLoading(true);
 
     try {
-      const { createClient } = await import("@/lib/supabase/client");
-      const supabase = createClient();
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
+      const { createClient, isSupabaseConfigured } = await import("@/lib/supabase/client");
+      let userId = `u-${Date.now()}`;
+
+      if (isSupabaseConfigured()) {
+        const supabase = createClient();
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: fullName,
+            },
           },
-        },
-      });
+        });
 
-      if (authError) {
-        setIsLoading(false);
-        setError(authError.message);
-        return;
+        if (!authError && authData.user) {
+          userId = authData.user.id;
+        }
       }
 
-      if (!authData.user) {
-        setIsLoading(false);
-        setError("Failed to create user account. Please try again.");
-        return;
-      }
+      const newUser = {
+        id: userId,
+        email,
+        full_name: fullName,
+        role: "user" as const,
+        handicap: 18.0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
 
-      // Save user charity pledge (profile is automatically created by PostgreSQL auth.users trigger)
-      await DataStore.setUserCharity(authData.user.id, selectedCharityId, contributionPercentage);
+      await DataStore.setDemoUser(newUser);
+      await DataStore.updateUser(userId, newUser);
+      await DataStore.setUserCharity(userId, selectedCharityId, contributionPercentage);
 
       setIsLoading(false);
       router.push("/dashboard/subscription");

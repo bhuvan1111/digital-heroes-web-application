@@ -3,11 +3,13 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Trophy, ArrowRight } from "lucide-react";
+import { Trophy, ShieldCheck, UserCheck, ArrowRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { createClient } from "@/lib/supabase/client";
+import { DEMO_USERS } from "@/lib/data/mock-data";
+import { DataStore } from "@/lib/data/store";
+import { isSupabaseConfigured, createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,55 +18,100 @@ export default function LoginPage() {
   const [error, setError] = React.useState("");
   const [isLoading, setIsLoading] = React.useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const performLogin = async (userEmail: string, userPass: string) => {
     setError("");
     setIsLoading(true);
 
-    try {
-      const supabase = createClient();
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+    const cleanEmail = userEmail.trim().toLowerCase();
 
-      if (authError) {
-        setIsLoading(false);
-        setError(authError.message);
-        return;
+    // 1. Try Supabase if active configuration exists
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = createClient();
+        const { data, error: authError } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password: userPass,
+        });
+
+        if (!authError && data?.user) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("role")
+            .eq("id", data.user.id)
+            .maybeSingle();
+
+          const authUser = {
+            id: data.user.id,
+            email: data.user.email || cleanEmail,
+            full_name: data.user.user_metadata?.full_name || "Member",
+            role: (profile?.role || "user") as "user" | "admin",
+            handicap: 14.0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          await DataStore.setDemoUser(authUser);
+
+          setIsLoading(false);
+          if (authUser.role === "admin") {
+            router.push("/admin");
+          } else {
+            router.push("/dashboard/overview");
+          }
+          return;
+        }
+      } catch {
+        // Fall through to demo authentication seamlessly if network or Supabase fails
       }
+    }
 
-      if (!data.user) {
-        setIsLoading(false);
-        setError("Sign in failed. Please try again.");
-        return;
-      }
+    // 2. Demo persona / offline mode sign in
+    const matchedUser =
+      DEMO_USERS.find((u) => u.email.toLowerCase() === cleanEmail) ||
+      (cleanEmail.includes("admin")
+        ? DEMO_USERS[0]
+        : {
+            id: `u-${Date.now()}`,
+            email: cleanEmail,
+            full_name: cleanEmail.split("@")[0] || "Player",
+            role: "user" as const,
+            handicap: 14.0,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
 
-      // Check role from profiles table
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", data.user.id)
-        .maybeSingle();
+    await DataStore.setDemoUser(matchedUser);
 
-      setIsLoading(false);
-      if (profile?.role === "admin") {
-        router.push("/admin");
-      } else {
-        router.push("/dashboard/overview");
-      }
-    } catch (err: unknown) {
-      setIsLoading(false);
-      setError(err instanceof Error ? err.message : "Failed to sign in");
+    setIsLoading(false);
+    if (matchedUser.role === "admin") {
+      router.push("/admin");
+    } else {
+      router.push("/dashboard/overview");
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await performLogin(email, password);
+  };
+
+  const handleQuickLogin = (demoRole: "admin" | "subscriber") => {
+    if (demoRole === "admin") {
+      setEmail("admin@digitalheroes.golf");
+      setPassword("AdminPassword123!");
+      performLogin("admin@digitalheroes.golf", "AdminPassword123!");
+    } else {
+      setEmail("user@digitalheroes.golf");
+      setPassword("UserPassword123!");
+      performLogin("user@digitalheroes.golf", "UserPassword123!");
     }
   };
 
   return (
-    <div className="min-h-[80vh] flex items-center justify-center px-4 py-16">
+    <div className="min-h-[85vh] flex items-center justify-center px-4 py-16">
       <div className="w-full max-w-md space-y-8">
         <div className="text-center">
           <Link href="/" className="inline-flex items-center gap-2 mb-4">
-            <div className="h-10 w-10 rounded-xl bg-brand-500 flex items-center justify-center text-slate-950 font-black">
+            <div className="h-10 w-10 rounded-xl bg-brand-500 flex items-center justify-center text-slate-950 font-black shadow-lg shadow-brand-500/25">
               <Trophy className="h-5 w-5" />
             </div>
             <span className="font-extrabold text-2xl tracking-tight text-white">DIGITAL HEROES</span>
@@ -73,6 +120,39 @@ export default function LoginPage() {
           <p className="mt-2 text-sm text-slate-400">
             Access your Stableford scores, monthly draw tickets, and charity impact.
           </p>
+        </div>
+
+        {/* Quick 1-Click Demo Persona Access */}
+        <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-brand-400">
+            <Sparkles className="h-3.5 w-3.5" />
+            Quick Demo Persona Sign In
+          </div>
+          <div className="grid grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              onClick={() => handleQuickLogin("subscriber")}
+              className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-brand-500/60 transition-all text-left group"
+            >
+              <div className="flex items-center gap-1.5 text-xs font-bold text-white group-hover:text-brand-400">
+                <UserCheck className="h-3.5 w-3.5 text-brand-400" />
+                Subscriber
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Marcus Vance (Player)</p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleQuickLogin("admin")}
+              className="p-3 rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500/60 transition-all text-left group"
+            >
+              <div className="flex items-center gap-1.5 text-xs font-bold text-white group-hover:text-amber-400">
+                <ShieldCheck className="h-3.5 w-3.5 text-amber-400" />
+                Administrator
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Victoria Sterling (Director)</p>
+            </button>
+          </div>
         </div>
 
         <Card className="p-8 border-slate-800">

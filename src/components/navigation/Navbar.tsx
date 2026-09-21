@@ -34,9 +34,15 @@ export function Navbar() {
   }, [pathname]);
 
   const handleSignOut = async () => {
-    const { createClient } = await import("@/lib/supabase/client");
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    try {
+      const { createClient, isSupabaseConfigured } = await import("@/lib/supabase/client");
+      if (isSupabaseConfigured()) {
+        const supabase = createClient();
+        await supabase.auth.signOut();
+      }
+    } catch {}
+
+    await DataStore.setDemoUser(null);
     setCurrentUser(null);
     router.push("/login");
   };

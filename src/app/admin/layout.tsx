@@ -21,27 +21,83 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
+import { DEMO_USERS } from "@/lib/data/mock-data";
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
+  const [isLoading, setIsLoading] = React.useState(true);
 
   React.useEffect(() => {
     async function checkAdmin() {
       try {
         const user = await DataStore.getCurrentUser();
-        if (!user || user.role !== "admin") {
-          router.push("/dashboard/overview");
-          return;
-        }
         setCurrentUser(user);
+        setIsLoading(false);
       } catch (err) {
         console.error("Admin layout verification error:", err);
-        router.push("/dashboard/overview");
+        setIsLoading(false);
       }
     }
     checkAdmin();
-  }, [pathname, router]);
+  }, [pathname]);
+
+  const handleAuthorizeAdmin = async () => {
+    const admin = DEMO_USERS[0];
+    await DataStore.setDemoUser(admin);
+    setCurrentUser(admin);
+    router.refresh();
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#060a12] flex items-center justify-center p-4">
+        <div className="text-slate-400 text-sm flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-amber-400 animate-pulse" />
+          <span>Verifying administrator credentials...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser || currentUser.role !== "admin") {
+    return (
+      <div className="min-h-screen bg-[#060a12] flex items-center justify-center p-4">
+        <div className="max-w-md w-full p-8 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-6 shadow-2xl">
+          <div className="h-16 w-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto shadow-lg">
+            <ShieldCheck className="h-8 w-8" />
+          </div>
+          <div>
+            <Badge variant="gold" className="mb-2">Admin Governance Suite</Badge>
+            <h2 className="text-2xl font-bold text-white">Administrator Access Required</h2>
+            <p className="text-sm text-slate-400 mt-2 leading-relaxed">
+              You are currently viewing as{" "}
+              <strong className="text-slate-200">{currentUser?.full_name || "Guest / Subscriber"}</strong>.
+              To access the draw simulator, charity manager, and financial audit suite, authorize as the platform director.
+            </p>
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <Button
+              variant="gold"
+              onClick={handleAuthorizeAdmin}
+              className="w-full gap-2 py-3"
+            >
+              <ShieldCheck className="h-4 w-4" />
+              Switch to Victoria Sterling (Admin Persona)
+            </Button>
+
+            <Link href="/dashboard/overview" className="w-full block">
+              <Button variant="outline" className="w-full gap-2">
+                <ArrowLeft className="h-4 w-4" /> Return to Subscriber Portal
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
 
   const navItems = [

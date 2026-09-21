@@ -153,7 +153,7 @@ export default function AdminReportsPage() {
                 contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "12px" }}
                 formatter={(val: number) => [formatCurrency(val), "Disbursed"]}
               />
-              <Bar dataKey="value" name="Funds Received" fill="#10b981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="amount" name="Funds Received" fill="#10b981" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
