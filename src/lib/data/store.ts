@@ -191,6 +191,20 @@ export class DataStore {
   // AUTH & USER PROFILES
   // --------------------------------------------------------------------------
 
+  public static getCurrentUserSync(): UserProfile | null {
+    if (typeof window === "undefined") return memoryUsers[1] || DEMO_USERS[1];
+    if (localStorage.getItem("dh_demo_user_logged_out") === "true") {
+      return null;
+    }
+    const stored = localStorage.getItem("dh_demo_user");
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch {}
+    }
+    return memoryUsers[1] || DEMO_USERS[1];
+  }
+
   public static async setDemoUser(user: UserProfile | null): Promise<void> {
     if (typeof window === "undefined") return;
     if (user) {
@@ -206,6 +220,7 @@ export class DataStore {
       document.cookie = "dh_user_id=; path=/; max-age=0; SameSite=Lax";
       document.cookie = "dh_demo_user=; path=/; max-age=0; SameSite=Lax";
     }
+    window.dispatchEvent(new CustomEvent("dh:user-changed", { detail: user }));
   }
 
   public static async getCurrentUser(): Promise<UserProfile | null> {

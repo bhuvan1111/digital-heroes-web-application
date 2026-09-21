@@ -26,40 +26,27 @@ import { DEMO_USERS } from "@/lib/data/mock-data";
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
-  const [isLoading, setIsLoading] = React.useState(true);
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(() => DataStore.getCurrentUserSync());
 
   React.useEffect(() => {
-    async function checkAdmin() {
-      try {
-        const user = await DataStore.getCurrentUser();
-        setCurrentUser(user);
-        setIsLoading(false);
-      } catch (err) {
-        console.error("Admin layout verification error:", err);
-        setIsLoading(false);
-      }
-    }
-    checkAdmin();
+    const user = DataStore.getCurrentUserSync();
+    setCurrentUser(user);
+
+    const handleUserChange = (e: CustomEvent<UserProfile | null>) => {
+      setCurrentUser(e.detail);
+    };
+    window.addEventListener("dh:user-changed", handleUserChange as EventListener);
+    return () => {
+      window.removeEventListener("dh:user-changed", handleUserChange as EventListener);
+    };
   }, [pathname]);
 
   const handleAuthorizeAdmin = async () => {
     const admin = DEMO_USERS[0];
     await DataStore.setDemoUser(admin);
     setCurrentUser(admin);
-    router.refresh();
+    router.push("/admin");
   };
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-[#060a12] flex items-center justify-center p-4">
-        <div className="text-slate-400 text-sm flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-amber-400 animate-pulse" />
-          <span>Verifying administrator credentials...</span>
-        </div>
-      </div>
-    );
-  }
 
   if (!currentUser || currentUser.role !== "admin") {
     return (

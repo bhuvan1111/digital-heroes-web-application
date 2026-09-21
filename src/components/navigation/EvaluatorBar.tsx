@@ -21,16 +21,19 @@ import Link from "next/link";
 export function EvaluatorBar() {
   const pathname = usePathname();
   const router = useRouter();
-  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
-  const [isClient, setIsClient] = React.useState(false);
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(() => DataStore.getCurrentUserSync());
 
   React.useEffect(() => {
-    setIsClient(true);
-    async function loadUser() {
-      const user = await DataStore.getCurrentUser();
-      setCurrentUser(user);
-    }
-    loadUser();
+    const user = DataStore.getCurrentUserSync();
+    setCurrentUser(user);
+
+    const handleUserChange = (e: CustomEvent<UserProfile | null>) => {
+      setCurrentUser(e.detail);
+    };
+    window.addEventListener("dh:user-changed", handleUserChange as EventListener);
+    return () => {
+      window.removeEventListener("dh:user-changed", handleUserChange as EventListener);
+    };
   }, [pathname]);
 
   const switchPersona = async (persona: "subscriber" | "admin" | "visitor") => {
@@ -38,33 +41,19 @@ export function EvaluatorBar() {
       const subscriber = DEMO_USERS[1]; // Marcus Vance
       await DataStore.setDemoUser(subscriber);
       setCurrentUser(subscriber);
-      if (pathname.startsWith("/admin") || pathname.startsWith("/login")) {
-        router.push("/dashboard/overview");
-      } else {
-        router.refresh();
-      }
+      router.push("/dashboard/overview");
     } else if (persona === "admin") {
       const admin = DEMO_USERS[0]; // Victoria Sterling
       await DataStore.setDemoUser(admin);
       setCurrentUser(admin);
-      if (pathname.startsWith("/dashboard") || pathname.startsWith("/login")) {
-        router.push("/admin");
-      } else {
-        router.refresh();
-      }
+      router.push("/admin");
     } else {
       // Visitor / Logged Out
       await DataStore.setDemoUser(null);
       setCurrentUser(null);
-      if (pathname.startsWith("/admin") || pathname.startsWith("/dashboard")) {
-        router.push("/login");
-      } else {
-        router.refresh();
-      }
+      router.push("/charities");
     }
   };
-
-  if (!isClient) return null;
 
   const isSubscriber = currentUser?.role === "user";
   const isAdmin = currentUser?.role === "admin";

@@ -23,13 +23,13 @@ import { Badge } from "@/components/ui/badge";
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(() => DataStore.getCurrentUserSync());
   const [subscription, setSubscription] = React.useState<Subscription | null>(null);
 
   React.useEffect(() => {
     async function loadUserAndSub() {
       try {
-        const user = await DataStore.getCurrentUser();
+        const user = DataStore.getCurrentUserSync();
         if (!user) {
           router.push("/login");
           return;
@@ -42,6 +42,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
     }
     loadUserAndSub();
+
+    const handleUserChange = async (e: CustomEvent<UserProfile | null>) => {
+      const u = e.detail;
+      setCurrentUser(u);
+      if (u) {
+        const sub = await DataStore.getUserSubscription(u.id);
+        if (sub) setSubscription(sub);
+      }
+    };
+    window.addEventListener("dh:user-changed", handleUserChange as EventListener);
+    return () => {
+      window.removeEventListener("dh:user-changed", handleUserChange as EventListener);
+    };
   }, [pathname, router]);
 
   const navItems = [

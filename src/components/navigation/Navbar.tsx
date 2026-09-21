@@ -22,15 +22,20 @@ import { Button } from "../ui/button";
 export function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
-  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(null);
+  const [currentUser, setCurrentUser] = React.useState<UserProfile | null>(() => DataStore.getCurrentUserSync());
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
 
   React.useEffect(() => {
-    async function fetchUser() {
-      const user = await DataStore.getCurrentUser();
-      setCurrentUser(user);
-    }
-    fetchUser();
+    const user = DataStore.getCurrentUserSync();
+    setCurrentUser(user);
+
+    const handleUserChange = (e: CustomEvent<UserProfile | null>) => {
+      setCurrentUser(e.detail);
+    };
+    window.addEventListener("dh:user-changed", handleUserChange as EventListener);
+    return () => {
+      window.removeEventListener("dh:user-changed", handleUserChange as EventListener);
+    };
   }, [pathname]);
 
   const handleSignOut = async () => {
